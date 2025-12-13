@@ -80,6 +80,7 @@ docker build -f Dockerfile -t "$IMAGE_TAG" . > "$LOG_FILE" 2>&1 || { send_logs_t
 if docker inspect "$CONTAINER_NAME" >/dev/null 2>&1; then
   docker stop "$CONTAINER_NAME" >/dev/null 2>&1 || true
   docker rm "$CONTAINER_NAME" >/dev/null 2>&1 || true
+  sleep 2
 fi
 
 # Step 7: Deploy new container with env vars and volumes
