@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>App Manager</title>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; max-width: 900px; margin: 0 auto; padding: 20px; background-color: #f4f4f9; }
+        h1 { color: #333; }
+        .card { background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); margin-bottom: 20px; }
+        input[type="text"], input[type="password"] { width: 100%; padding: 10px; margin: 10px 0; border: 1px solid #ddd; border-radius: 4px; box-sizing: border-box;}
+        button { background-color: #007bff; color: white; border: none; padding: 10px 20px; border-radius: 4px; cursor: pointer; }
+        button:hover { background-color: #0056b3; }
+        button.delete { background-color: #dc3545; }
+        button.delete:hover { background-color: #bd2130; }
+        table { width: 100%; border-collapse: collapse; margin-top: 10px; }
+        th, td { text-align: left; padding: 12px; border-bottom: 1px solid #ddd; }
+        .status-active { color: green; font-weight: bold; }
+        .status-error { color: red; font-weight: bold; }
+        .status-pending { color: orange; font-weight: bold; }
+        .status-building { color: blue; font-weight: bold; }
+    </style>
+</head>
+<body>
+    <h1>App Manager</h1>
+
+    <div class="card">
+        <h2>Settings</h2>
+        <form action="/settings" method="post">
+            <label for="api_key">Jules API Key:</label>
+            <input type="password" name="api_key" id="api_key" value="{{ api_key }}" placeholder="Enter your Jules API Key">
+            <button type="submit">Save</button>
+        </form>
+    </div>
+
+    <div class="card">
+        <h2>Add Repository</h2>
+        <form action="/repos" method="post">
+            <input type="text" name="url" placeholder="https://github.com/user/repo.git" required>
+            <button type="submit">Add Repository</button>
+        </form>
+    </div>
+
+    <div class="card">
+        <div style="display: flex; justify-content: space-between; align-items: center;">
+            <h2>Monitored Repositories</h2>
+            <form action="/repos/trigger" method="post" style="margin: 0;">
+                <button type="submit">Check Updates Now</button>
+            </form>
+        </div>
+
+        <table>
+            <thead>
+                <tr>
+                    <th>Name</th>
+                    <th>URL</th>
+                    <th>Status</th>
+                    <th>Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for repo in repos %}
+                <tr>
+                    <td>{{ repo.name }}</td>
+                    <td><a href="{{ repo.url }}" target="_blank">{{ repo.url }}</a></td>
+                    <td class="status-{{ repo.status }}">{{ repo.status }}</td>
+                    <td>
+                        <form action="/repos/{{ repo.id }}/delete" method="post" onsubmit="return confirm('Are you sure?');">
+                            <button type="submit" class="delete">Remove</button>
+                        </form>
+                    </td>
+                </tr>
+                {% else %}
+                <tr>
+                    <td colspan="4" style="text-align: center; color: #777;">No repositories added yet.</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</body>
+</html>
