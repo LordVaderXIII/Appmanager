@@ -77,10 +77,10 @@ LOG_FILE="/tmp/appmanager_build.log"
 docker build -f Dockerfile -t "$IMAGE_TAG" . > "$LOG_FILE" 2>&1 || { send_logs_to_jules "$(cat $LOG_FILE)"; echo "Error: Docker build failed"; exit 1; }
 
 # Step 6: Stop and remove old container if exists
-if [ "$(docker ps -q -f name=$CONTAINER_NAME)" ]; then
-  docker stop "$CONTAINER_NAME" || { echo "Error: Stop failed"; exit 1; }
+if docker inspect "$CONTAINER_NAME" >/dev/null 2>&1; then
+  docker stop "$CONTAINER_NAME" >/dev/null 2>&1 || true
+  docker rm "$CONTAINER_NAME" >/dev/null 2>&1 || true
 fi
-docker rm "$CONTAINER_NAME" || true # Ignore if not exists
 
 # Step 7: Deploy new container with env vars and volumes
 docker run -d \
@@ -97,4 +97,9 @@ docker run -d \
 # Step 8: Prune orphaned/dangling images
 docker image prune -f --filter "dangling=true" || { echo "Warning: Prune failed, but update complete"; }
 
-echo "Update complete. Check logs: docker logs $CONTAINER_NAME"
+if [ "$(docker inspect -f '{{.State.Running}}' "$CONTAINER_NAME" 2>/dev/null)" = "true" ]; then
+  echo "Update complete. Container is running."
+else
+  echo "Warning: Container is NOT running."
+fi
+echo "Check logs: docker logs $CONTAINER_NAME"
