@@ -82,6 +82,9 @@ if docker inspect "$CONTAINER_NAME" >/dev/null 2>&1; then
   docker rm "$CONTAINER_NAME" >/dev/null 2>&1 || true
 fi
 
+# Add a 2-second delay to allow the port to be released
+sleep 2
+
 # Step 7: Deploy new container with env vars and volumes
 docker run -d \
   --name "$CONTAINER_NAME" \
