@@ -7,6 +7,8 @@ class Settings(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     jules_api_key = Column(String, nullable=True)
+    github_username = Column(String, nullable=True)
+    github_token = Column(String, nullable=True)
 
 class Repository(Base):
     __tablename__ = "repositories"
