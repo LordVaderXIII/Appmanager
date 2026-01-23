@@ -1,5 +1,6 @@
 from sqlalchemy import Column, Integer, String, DateTime, Boolean, ForeignKey, Text
 from sqlalchemy.sql import func
+from sqlalchemy.orm import relationship
 from .database import Base
 
 class Settings(Base):
@@ -27,11 +28,19 @@ class Repository(Base):
     volume_mappings = Column(Text, nullable=True) # JSON string: {"/host/path": {"bind": "/container/path", "mode": "rw"}}
     env_vars = Column(Text, nullable=True) # JSON string: {"KEY": "VALUE"}
 
+    error_logs = relationship("ErrorLog", back_populates="repository")
+
 class ErrorLog(Base):
     __tablename__ = "error_logs"
 
     id = Column(Integer, primary_key=True, index=True)
     repository_id = Column(Integer, ForeignKey("repositories.id"))
+    repository = relationship("Repository", back_populates="error_logs")
     error_hash = Column(String, index=True)
     error_message = Column(Text)
     timestamp = Column(DateTime(timezone=True), server_default=func.now())
+
+    # Jules Integration
+    jules_session_id = Column(String, nullable=True)
+    pr_url = Column(String, nullable=True)
+    fix_status = Column(String, default="reported") # reported, pr_created, resolved
