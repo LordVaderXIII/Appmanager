@@ -85,5 +85,28 @@ class TestAppManager(unittest.TestCase):
         # Verification: Jules Service should NOT be called again
         mock_jules.report_error.assert_not_called()
 
+    @patch("src.main.GitService")
+    @patch("src.main.docker_service")
+    def test_process_repo_arguments(self, mock_docker, mock_git):
+        # Setup Mocks
+        mock_git.clone_repo.return_value = (True, "Cloned")
+        mock_docker.build_and_run.return_value = (True, "Success")
+        mock_docker.get_logs.return_value = "Everything OK"
+
+        # Create Repo
+        repo = Repository(url="https://github.com/test/repo.git", status="pending")
+        self.db.add(repo)
+        self.db.commit()
+
+        # Run Process
+        process_repo(repo, self.db, "fake-api-key")
+
+        # Verify build_and_run called with timeout and log file
+        mock_docker.build_and_run.assert_called_once()
+        kwargs = mock_docker.build_and_run.call_args[1]
+        self.assertEqual(kwargs['timeout'], 300)
+        self.assertIn('logs', kwargs['log_filepath'])
+        self.assertTrue(kwargs['log_filepath'].endswith(f"{repo.id}.log"))
+
 if __name__ == "__main__":
     unittest.main()

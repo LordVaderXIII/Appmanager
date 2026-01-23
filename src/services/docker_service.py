@@ -104,78 +104,143 @@ class DockerService:
                     return port
         return 0
 
+    def _run_cmd(self, cmd: List[str], cwd: str, log_filepath: Optional[str], timeout: int) -> tuple[bool, str]:
+        """Helper to run subprocess commands with logging and timeout."""
+        f_handle = None
+        try:
+            if log_filepath:
+                # Open in append mode so we can chain commands (e.g. build then run)
+                # But caller should handle truncation if it's the start of a sequence.
+                # Here we assume the caller manages the file lifecycle or we append.
+                # Actually, usually 'w' for the first command, 'a' for subsequent?
+                # For simplicity, let's use 'a' and assume caller truncated if needed.
+                # BUT, if we want to clear previous build logs, we should do it at the start of build_and_run.
+                f_handle = open(log_filepath, "a")
+                f_handle.write(f"\n--- Executing: {' '.join(cmd)} ---\n")
+                f_handle.flush()
+
+                subprocess.run(
+                    cmd, cwd=cwd, stdout=f_handle, stderr=subprocess.STDOUT, timeout=timeout, check=True
+                )
+                return True, "Success"
+            else:
+                res = subprocess.run(
+                    cmd, cwd=cwd, capture_output=True, text=True, timeout=timeout
+                )
+                if res.returncode != 0:
+                    return False, f"Failed:\n{res.stderr}\n{res.stdout}"
+                return True, "Success"
+
+        except subprocess.TimeoutExpired:
+            msg = f"Process timed out after {timeout} seconds."
+            if f_handle:
+                f_handle.write(f"\n[ERROR] {msg}\n")
+            return False, msg
+        except subprocess.CalledProcessError as e:
+            msg = f"Process failed with exit code {e.returncode}."
+            if f_handle:
+                f_handle.write(f"\n[ERROR] {msg}\n")
+            return False, msg
+        except Exception as e:
+            msg = f"Unexpected error: {str(e)}"
+            if f_handle:
+                 f_handle.write(f"\n[ERROR] {msg}\n")
+            return False, msg
+        finally:
+            if f_handle:
+                f_handle.close()
+
     def build_and_run(self, repo_path: str, repo_name: str,
                       ports: Optional[Dict] = None,
                       volumes: Optional[Dict] = None,
                       env: Optional[Dict] = None,
-                      container_name: Optional[str] = None):
+                      container_name: Optional[str] = None,
+                      log_filepath: Optional[str] = None,
+                      timeout: int = 300):
         """
         Builds and runs the project.
         Returns: (success: bool, logs: str)
         """
+        # Truncate log file at start of new build sequence
+        if log_filepath:
+            try:
+                with open(log_filepath, "w") as f:
+                    f.write(f"Starting build/run for {repo_name}...\n")
+            except Exception as e:
+                logger.error(f"Could not init log file {log_filepath}: {e}")
+
         compose_file = self.get_compose_file(repo_path)
 
         if compose_file:
-            return self._handle_compose(repo_path, compose_file)
+            return self._handle_compose(repo_path, compose_file, log_filepath, timeout)
         elif os.path.exists(os.path.join(repo_path, "Dockerfile")):
-            return self._handle_dockerfile(repo_path, repo_name, ports, volumes, env, container_name)
+            return self._handle_dockerfile(repo_path, repo_name, ports, volumes, env, container_name, log_filepath, timeout)
         else:
             return False, "No Dockerfile or docker-compose.yml found."
 
-    def _handle_compose(self, path: str, compose_file: str):
-        try:
-            # Build
-            build_cmd = ["docker", "compose", "-f", compose_file, "build"]
-            build_res = subprocess.run(
-                build_cmd, cwd=path, capture_output=True, text=True
-            )
-            if build_res.returncode != 0:
-                return False, f"Build Failed:\n{build_res.stderr}\n{build_res.stdout}"
+    def _handle_compose(self, path: str, compose_file: str, log_filepath: str, timeout: int):
+        # Build
+        success, msg = self._run_cmd(
+            ["docker", "compose", "-f", compose_file, "build"],
+            cwd=path, log_filepath=log_filepath, timeout=timeout
+        )
+        if not success:
+            return False, msg
 
-            # Up
-            up_cmd = ["docker", "compose", "-f", compose_file, "up", "-d"]
-            up_res = subprocess.run(
-                up_cmd, cwd=path, capture_output=True, text=True
-            )
-            if up_res.returncode != 0:
-                return False, f"Start Failed:\n{up_res.stderr}\n{up_res.stdout}"
+        # Up
+        success, msg = self._run_cmd(
+            ["docker", "compose", "-f", compose_file, "up", "-d"],
+            cwd=path, log_filepath=log_filepath, timeout=timeout
+        )
+        if not success:
+            return False, msg
 
-            return True, "Compose Up Successful"
-        except Exception as e:
-            return False, str(e)
+        return True, "Compose Up Successful"
 
     def _handle_dockerfile(self, path: str, repo_name: str,
                            ports: Optional[Dict],
                            volumes: Optional[Dict],
                            env: Optional[Dict],
-                           container_name: Optional[str]):
+                           container_name: Optional[str],
+                           log_filepath: str,
+                           timeout: int):
         # Default tag from repo name if no custom container name
         tag_name = container_name if container_name else repo_name
         # Sanitize tag name (lowercase, no spaces, restricted chars)
         tag = "".join(c if c.isalnum() else "_" for c in tag_name).lower()
 
+        # Build
+        success, msg = self._run_cmd(
+            ["docker", "build", "-t", tag, "."],
+            cwd=path, log_filepath=log_filepath, timeout=timeout
+        )
+        if not success:
+            return False, msg
+
+        # Stop existing container if running
         try:
-            # Build
-            build_cmd = ["docker", "build", "-t", tag, "."]
-            build_res = subprocess.run(
-                build_cmd, cwd=path, capture_output=True, text=True
-            )
-            if build_res.returncode != 0:
-                return False, f"Build Failed:\n{build_res.stderr}\n{build_res.stdout}"
+            if log_filepath:
+                with open(log_filepath, "a") as f:
+                    f.write(f"\nStopping existing container {tag}...\n")
 
-            # Stop existing container if running
-            try:
-                existing = self.client.containers.get(tag)
-                existing.stop()
-                # Wait for port release?
-                # Script had sleep 2. We can try wait() but remove() is sync.
-                existing.remove()
-            except docker.errors.NotFound:
-                pass
-            except Exception as e:
-                logger.warning(f"Could not stop/remove existing container {tag}: {e}")
+            existing = self.client.containers.get(tag)
+            existing.stop()
+            # Wait for port release?
+            existing.remove()
+        except docker.errors.NotFound:
+            pass
+        except Exception as e:
+            logger.warning(f"Could not stop/remove existing container {tag}: {e}")
+            if log_filepath:
+                with open(log_filepath, "a") as f:
+                     f.write(f"\nWarning: Could not stop/remove existing container: {e}\n")
 
-            # Run with Config
+        # Run with Config
+        try:
+            if log_filepath:
+                with open(log_filepath, "a") as f:
+                    f.write(f"\nStarting container {tag}...\n")
+
             run_kwargs = {
                 "detach": True,
                 "name": tag,
@@ -193,9 +258,17 @@ class DockerService:
 
             self.client.containers.run(tag, **run_kwargs)
 
+            if log_filepath:
+                with open(log_filepath, "a") as f:
+                    f.write(f"\nContainer {tag} started successfully.\n")
+
             return True, "Container Started"
         except Exception as e:
-            return False, str(e)
+            msg = f"Run Error: {str(e)}"
+            if log_filepath:
+                with open(log_filepath, "a") as f:
+                    f.write(f"\n[ERROR] {msg}\n")
+            return False, msg
 
     def get_logs(self, repo_path: str, repo_name: str, container_name: str = None):
         """Fetch logs from running containers associated with the repo."""

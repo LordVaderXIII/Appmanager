@@ -1,6 +1,6 @@
 from fastapi import FastAPI, Request, Depends, Form, HTTPException, BackgroundTasks
 from fastapi.templating import Jinja2Templates
-from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
+from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy.orm import Session
 from apscheduler.schedulers.background import BackgroundScheduler
@@ -23,6 +23,11 @@ Base.metadata.create_all(bind=engine)
 # Logging Setup
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("AppManager")
+
+# Ensure Data Directories
+DATA_DIR = os.getenv("DATA_DIR", "./data")
+LOGS_DIR = os.path.join(DATA_DIR, "logs")
+os.makedirs(LOGS_DIR, exist_ok=True)
 
 def run_migrations():
     """
@@ -166,13 +171,17 @@ def process_repo(repo: Repository, db: Session, api_key: str):
         env = json.loads(repo.env_vars) if repo.env_vars else None
         container_name = repo.container_name
 
+        log_file = os.path.join(LOGS_DIR, f"{repo.id}.log")
+
         success, msg = docker_service.build_and_run(
             repo.local_path,
             repo.name,
             ports=ports,
             volumes=volumes,
             env=env,
-            container_name=container_name
+            container_name=container_name,
+            log_filepath=log_file,
+            timeout=300
         )
 
         if not success:
@@ -306,6 +315,7 @@ def add_repo(
             new_repo.volume_mappings = json.dumps(config["volumes"])
             new_repo.env_vars = json.dumps(config["env"])
             logger.info(f"Adopted config from container {config['name']}")
+            new_repo.status = "active" # Don't rebuild immediately
     else:
         # New App Logic - Auto Configuration
         # Derive name from URL
@@ -375,3 +385,12 @@ def inspect_container(container_id: str):
     if not config:
         raise HTTPException(status_code=404, detail="Container not found")
     return JSONResponse(content=config)
+
+@app.get("/repos/{repo_id}/logs/build")
+def get_build_logs(repo_id: int):
+    log_file = os.path.join(LOGS_DIR, f"{repo_id}.log")
+    if os.path.exists(log_file):
+        with open(log_file, "r") as f:
+            content = f.read()
+        return PlainTextResponse(content)
+    return PlainTextResponse("No logs found.", status_code=404)
