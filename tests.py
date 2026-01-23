@@ -1,5 +1,8 @@
 
 import unittest
+import os
+import shutil
+import tempfile
 from unittest.mock import MagicMock, patch
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
@@ -107,6 +110,81 @@ class TestAppManager(unittest.TestCase):
         self.assertEqual(kwargs['timeout'], 300)
         self.assertIn('logs', kwargs['log_filepath'])
         self.assertTrue(kwargs['log_filepath'].endswith(f"{repo.id}.log"))
+
+class TestProcessLogs(unittest.TestCase):
+    def setUp(self):
+        Base.metadata.create_all(bind=engine)
+        self.db = TestingSessionLocal()
+        self.temp_dir = tempfile.mkdtemp()
+        self.logs_dir = os.path.join(self.temp_dir, "logs")
+        os.makedirs(self.logs_dir, exist_ok=True)
+
+    def tearDown(self):
+        self.db.close()
+        Base.metadata.drop_all(bind=engine)
+        shutil.rmtree(self.temp_dir)
+
+    @patch("src.main.GitService")
+    @patch("src.main.docker_service")
+    @patch("src.main.JulesService")
+    def test_logs_creation(self, mock_jules, mock_docker, mock_git):
+        # Setup
+        mock_git.clone_repo.return_value = (True, "Cloned Successfully")
+        mock_docker.build_and_run.return_value = (True, "Built Successfully")
+        mock_docker.get_logs.return_value = "Container Logs"
+
+        repo = Repository(url="https://github.com/test/repo-logs.git", status="pending")
+        self.db.add(repo)
+        self.db.commit()
+
+        # We need to patch LOGS_DIR in src.main to point to self.logs_dir
+        with patch("src.main.LOGS_DIR", self.logs_dir):
+            process_repo(repo, self.db, "api-key")
+
+        # Verify File Exists
+        log_file = os.path.join(self.logs_dir, f"{repo.id}.log")
+        self.assertTrue(os.path.exists(log_file), "Log file was not created")
+
+        # Verify Content
+        with open(log_file, "r") as f:
+            content = f.read()
+
+        self.assertIn("--- Starting Job", content)
+        self.assertIn("Cloning from https://github.com/test/repo-logs.git", content)
+        self.assertIn("Clone Result: True - Cloned Successfully", content)
+        self.assertIn("Starting Docker build/run sequence", content)
+
+        # Verify Docker Service was called with correct log file path
+        mock_docker.build_and_run.assert_called_once()
+        call_args = mock_docker.build_and_run.call_args[1]
+        self.assertEqual(call_args['log_filepath'], log_file)
+
+    @patch("src.main.GitService")
+    @patch("src.main.docker_service")
+    @patch("src.main.JulesService")
+    def test_logs_on_git_failure(self, mock_jules, mock_docker, mock_git):
+        # Setup Git Failure
+        mock_git.clone_repo.return_value = (False, "Authentication Failed")
+        mock_jules.report_error.return_value = (True, "Reported")
+
+        repo = Repository(url="https://github.com/test/repo-fail.git", status="pending")
+        self.db.add(repo)
+        self.db.commit()
+
+        with patch("src.main.LOGS_DIR", self.logs_dir):
+            process_repo(repo, self.db, "api-key")
+
+        log_file = os.path.join(self.logs_dir, f"{repo.id}.log")
+        self.assertTrue(os.path.exists(log_file))
+
+        with open(log_file, "r") as f:
+            content = f.read()
+
+        self.assertIn("Job failed during Git Clone", content)
+        self.assertIn("Authentication Failed", content)
+
+        # Docker should NOT be called
+        mock_docker.build_and_run.assert_not_called()
 
 if __name__ == "__main__":
     unittest.main()

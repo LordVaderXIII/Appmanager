@@ -161,13 +161,13 @@ class DockerService:
         Builds and runs the project.
         Returns: (success: bool, logs: str)
         """
-        # Truncate log file at start of new build sequence
+        # Append to log file (initialized by orchestrator)
         if log_filepath:
             try:
-                with open(log_filepath, "w") as f:
-                    f.write(f"Starting build/run for {repo_name}...\n")
+                with open(log_filepath, "a") as f:
+                    f.write(f"\nStarting Docker build/run for {repo_name}...\n")
             except Exception as e:
-                logger.error(f"Could not init log file {log_filepath}: {e}")
+                logger.error(f"Could not write to log file {log_filepath}: {e}")
 
         compose_file = self.get_compose_file(repo_path)
 
