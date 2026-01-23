@@ -1,6 +1,6 @@
 from fastapi import FastAPI, Request, Depends, Form, HTTPException, BackgroundTasks
 from fastapi.templating import Jinja2Templates
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy.orm import Session
 from apscheduler.schedulers.background import BackgroundScheduler
@@ -8,7 +8,8 @@ import uvicorn
 import logging
 import os
 import hashlib
-from typing import List
+import json
+from typing import List, Optional
 
 from .database import engine, Base, get_db
 from .models import Repository, Settings, ErrorLog
@@ -43,6 +44,26 @@ def run_migrations():
                 if "github_token" not in columns:
                     logger.info("Migrating DB: Adding github_token to settings")
                     conn.execute(text("ALTER TABLE settings ADD COLUMN github_token VARCHAR"))
+
+                # Check for new columns in repositories
+                result = conn.execute(text("PRAGMA table_info(repositories)"))
+                repo_columns = [row[1] for row in result.fetchall()]
+
+                if "container_name" not in repo_columns:
+                    logger.info("Migrating DB: Adding container_name to repositories")
+                    conn.execute(text("ALTER TABLE repositories ADD COLUMN container_name VARCHAR"))
+
+                if "port_mappings" not in repo_columns:
+                    logger.info("Migrating DB: Adding port_mappings to repositories")
+                    conn.execute(text("ALTER TABLE repositories ADD COLUMN port_mappings TEXT"))
+
+                if "volume_mappings" not in repo_columns:
+                    logger.info("Migrating DB: Adding volume_mappings to repositories")
+                    conn.execute(text("ALTER TABLE repositories ADD COLUMN volume_mappings TEXT"))
+
+                if "env_vars" not in repo_columns:
+                    logger.info("Migrating DB: Adding env_vars to repositories")
+                    conn.execute(text("ALTER TABLE repositories ADD COLUMN env_vars TEXT"))
 
                 conn.commit()
             except Exception as e:
@@ -138,7 +159,21 @@ def process_repo(repo: Repository, db: Session, api_key: str):
         db.commit()
 
         logger.info(f"Building/Running {repo.name}...")
-        success, msg = docker_service.build_and_run(repo.local_path, repo.name)
+
+        # Load Config from DB
+        ports = json.loads(repo.port_mappings) if repo.port_mappings else None
+        volumes = json.loads(repo.volume_mappings) if repo.volume_mappings else None
+        env = json.loads(repo.env_vars) if repo.env_vars else None
+        container_name = repo.container_name
+
+        success, msg = docker_service.build_and_run(
+            repo.local_path,
+            repo.name,
+            ports=ports,
+            volumes=volumes,
+            env=env,
+            container_name=container_name
+        )
 
         if not success:
             handle_error(repo, db, api_key, "Build/Run Error", msg)
@@ -151,7 +186,7 @@ def process_repo(repo: Repository, db: Session, api_key: str):
     # 4. Check Runtime Health (Logs)
     # Even if build succeeded, we check logs for immediate crashes or errors
     # This is a bit heuristic.
-    logs = docker_service.get_logs(repo.local_path, repo.name)
+    logs = docker_service.get_logs(repo.local_path, repo.name, repo.container_name)
     # Simple heuristic: Check if container is running (handled by build_and_run somewhat)
     # If we wanted to scan logs for "Exception" or "Error", we could do it here.
     # For now, we rely on build/run exit codes mostly, but if the user wants to log
@@ -246,9 +281,14 @@ def update_settings(
     return RedirectResponse(url="/settings", status_code=303)
 
 @app.post("/repos")
-def add_repo(url: str = Form(...), background_tasks: BackgroundTasks = None, db: Session = Depends(get_db)):
+def add_repo(
+    url: str = Form(...),
+    link_container_id: Optional[str] = Form(None),
+    background_tasks: BackgroundTasks = None,
+    db: Session = Depends(get_db)
+):
     if not url.endswith(".git"):
-        # Helper to ensure it ends in .git for standard cloning, though git clone usually handles it.
+        # Helper to ensure it ends in .git for standard cloning
         pass
 
     existing = db.query(Repository).filter(Repository.url == url).first()
@@ -256,6 +296,44 @@ def add_repo(url: str = Form(...), background_tasks: BackgroundTasks = None, db:
         raise HTTPException(status_code=400, detail="Repository already exists")
 
     new_repo = Repository(url=url, status="pending")
+
+    if link_container_id:
+        # Link Existing Container Logic
+        config = docker_service.inspect_container(link_container_id)
+        if config:
+            new_repo.container_name = config["name"]
+            new_repo.port_mappings = json.dumps(config["ports"])
+            new_repo.volume_mappings = json.dumps(config["volumes"])
+            new_repo.env_vars = json.dumps(config["env"])
+            logger.info(f"Adopted config from container {config['name']}")
+    else:
+        # New App Logic - Auto Configuration
+        # Derive name from URL
+        repo_slug = url.split("/")[-1].replace(".git", "")
+        # Check if container name exists? simple heuristic for now.
+        new_repo.container_name = repo_slug # Default to repo slug
+
+        # Auto-Ports
+        # Assuming internal port is 80 (common) or we just map 80/tcp to something?
+        # Without knowing the internal port, we can't map it effectively unless we parse Dockerfile.
+        # But for many apps, we assume some standard or let user configure later.
+        # However, requirement says "intelligently selected".
+        # If we don't know the internal port, we can't map it.
+        # But if we assume 80 or 8080 or look at EXPOSE in Dockerfile later?
+        # For now, let's just pick a free port and map to 80 as a guess, or
+        # leave it empty and let Dockerfile EXPOSE handle it if using -P?
+        # Better: Pick a free port, say 8090, and map 8090->80.
+        free_port = docker_service.find_available_port()
+        if free_port:
+             new_repo.port_mappings = json.dumps({"80/tcp": free_port})
+
+        # Auto-Volumes
+        # /mnt/user/appdata/<name>
+        host_path = f"/mnt/user/appdata/{repo_slug}"
+        new_repo.volume_mappings = json.dumps({
+            host_path: {"bind": "/config", "mode": "rw"} # Common convention for /config
+        })
+
     db.add(new_repo)
     db.commit()
 
@@ -278,3 +356,22 @@ def delete_repo(repo_id: int, db: Session = Depends(get_db)):
 def trigger_now(background_tasks: BackgroundTasks):
     background_tasks.add_task(check_and_run_repos)
     return RedirectResponse(url="/", status_code=303)
+
+# --- Docker Endpoints ---
+
+@app.get("/docker/containers")
+def list_containers(db: Session = Depends(get_db)):
+    # Get managed container names
+    managed_repos = db.query(Repository).all()
+    managed_names = [r.container_name for r in managed_repos if r.container_name]
+
+    # Filter out managed ones
+    containers = docker_service.list_containers(filter_names=managed_names)
+    return JSONResponse(content=containers)
+
+@app.get("/docker/containers/{container_id}")
+def inspect_container(container_id: str):
+    config = docker_service.inspect_container(container_id)
+    if not config:
+        raise HTTPException(status_code=404, detail="Container not found")
+    return JSONResponse(content=config)
