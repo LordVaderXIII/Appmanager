@@ -23,6 +23,35 @@ Base.metadata.create_all(bind=engine)
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("AppManager")
 
+def run_migrations():
+    """
+    Simple migration to ensure new columns exist in settings table.
+    """
+    try:
+        from sqlalchemy import text
+        with engine.connect() as conn:
+            # Check if github_username column exists
+            try:
+                # SQLite specific check
+                result = conn.execute(text("PRAGMA table_info(settings)"))
+                columns = [row[1] for row in result.fetchall()]
+
+                if "github_username" not in columns:
+                    logger.info("Migrating DB: Adding github_username to settings")
+                    conn.execute(text("ALTER TABLE settings ADD COLUMN github_username VARCHAR"))
+
+                if "github_token" not in columns:
+                    logger.info("Migrating DB: Adding github_token to settings")
+                    conn.execute(text("ALTER TABLE settings ADD COLUMN github_token VARCHAR"))
+
+                conn.commit()
+            except Exception as e:
+                logger.warning(f"Migration check failed: {e}")
+    except Exception as e:
+        logger.error(f"Failed to connect for migration: {e}")
+
+run_migrations()
+
 app = FastAPI(title="App Manager")
 
 # Templates
@@ -64,6 +93,9 @@ def check_and_run_repos():
     db.close()
 
 def process_repo(repo: Repository, db: Session, api_key: str):
+    # Retrieve settings for Git Auth
+    settings = get_settings(db)
+
     # 1. Determine Local Path
     if not repo.local_path:
         repo_slug = repo.url.split("/")[-1].replace(".git", "")
@@ -75,14 +107,24 @@ def process_repo(repo: Repository, db: Session, api_key: str):
     repo_updated = False
     if not os.path.exists(repo.local_path):
         logger.info(f"Cloning {repo.name}...")
-        success, msg = GitService.clone_repo(repo.url, repo.local_path)
+        success, msg = GitService.clone_repo(
+            repo.url,
+            repo.local_path,
+            settings.github_username,
+            settings.github_token
+        )
         if not success:
             handle_error(repo, db, api_key, "Git Clone Error", msg)
             return
         repo_updated = True
     else:
         logger.info(f"Pulling {repo.name}...")
-        success, msg = GitService.pull_repo(repo.local_path)
+        success, msg = GitService.pull_repo(
+            repo.local_path,
+            repo.url,
+            settings.github_username,
+            settings.github_token
+        )
         if not success and msg != "No updates":
              handle_error(repo, db, api_key, "Git Pull Error", msg)
              return
@@ -174,19 +216,34 @@ def shutdown_event():
 @app.get("/", response_class=HTMLResponse)
 def dashboard(request: Request, db: Session = Depends(get_db)):
     repos = db.query(Repository).all()
-    settings = get_settings(db)
-    return templates.TemplateResponse("index.html", {
+    return templates.TemplateResponse("dashboard.html", {
         "request": request,
-        "repos": repos,
-        "api_key": settings.jules_api_key
+        "repos": repos
+    })
+
+@app.get("/settings", response_class=HTMLResponse)
+def settings_page(request: Request, db: Session = Depends(get_db)):
+    settings = get_settings(db)
+    return templates.TemplateResponse("settings.html", {
+        "request": request,
+        "api_key": settings.jules_api_key,
+        "github_username": settings.github_username,
+        "github_token": settings.github_token
     })
 
 @app.post("/settings")
-def update_settings(api_key: str = Form(...), db: Session = Depends(get_db)):
+def update_settings(
+    api_key: str = Form(""),
+    github_username: str = Form(""),
+    github_token: str = Form(""),
+    db: Session = Depends(get_db)
+):
     settings = get_settings(db)
     settings.jules_api_key = api_key
+    settings.github_username = github_username
+    settings.github_token = github_token
     db.commit()
-    return RedirectResponse(url="/", status_code=303)
+    return RedirectResponse(url="/settings", status_code=303)
 
 @app.post("/repos")
 def add_repo(url: str = Form(...), background_tasks: BackgroundTasks = None, db: Session = Depends(get_db)):
