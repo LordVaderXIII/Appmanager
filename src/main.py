@@ -9,6 +9,7 @@ import logging
 import os
 import hashlib
 import json
+import datetime
 from typing import List, Optional
 
 from .database import engine, Base, get_db
@@ -122,36 +123,65 @@ def process_repo(repo: Repository, db: Session, api_key: str):
     # Retrieve settings for Git Auth
     settings = get_settings(db)
 
+    # Define log file path
+    log_file = os.path.join(LOGS_DIR, f"{repo.id}.log")
+
+    # Helper to append to log
+    def log_to_file(message):
+        try:
+            timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            with open(log_file, "a") as f:
+                f.write(f"[{timestamp}] {message}\n")
+        except Exception as e:
+            logger.error(f"Failed to write to log file: {e}")
+
+    # Initialize Log File (Truncate)
+    try:
+        with open(log_file, "w") as f:
+            f.write(f"--- Starting Job for {repo.name or 'Repo ID ' + str(repo.id)} ---\n")
+    except Exception as e:
+        logger.error(f"Failed to init log file: {e}")
+
     # 1. Determine Local Path
+    log_to_file("Determining local path...")
     if not repo.local_path:
         repo_slug = repo.url.split("/")[-1].replace(".git", "")
         repo.local_path = os.path.join(os.getenv("DATA_DIR", "./data"), "repos", repo_slug)
         repo.name = "/".join(repo.url.split("/")[-2:]).replace(".git", "")
         db.commit()
+        log_to_file(f"Local path set to: {repo.local_path}")
 
     # 2. Clone or Pull
     repo_updated = False
     if not os.path.exists(repo.local_path):
         logger.info(f"Cloning {repo.name}...")
+        log_to_file(f"Cloning from {repo.url}...")
         success, msg = GitService.clone_repo(
             repo.url,
             repo.local_path,
             settings.github_username,
             settings.github_token
         )
+        log_to_file(f"Clone Result: {success} - {msg}")
+
         if not success:
+            log_to_file("Job failed during Git Clone.")
             handle_error(repo, db, api_key, "Git Clone Error", msg)
             return
         repo_updated = True
     else:
         logger.info(f"Pulling {repo.name}...")
+        log_to_file("Pulling updates...")
         success, msg = GitService.pull_repo(
             repo.local_path,
             repo.url,
             settings.github_username,
             settings.github_token
         )
+        log_to_file(f"Pull Result: {success} - {msg}")
+
         if not success and msg != "No updates":
+             log_to_file("Job failed during Git Pull.")
              handle_error(repo, db, api_key, "Git Pull Error", msg)
              return
         if success:
@@ -164,14 +194,13 @@ def process_repo(repo: Repository, db: Session, api_key: str):
         db.commit()
 
         logger.info(f"Building/Running {repo.name}...")
+        log_to_file("Starting Docker build/run sequence...")
 
         # Load Config from DB
         ports = json.loads(repo.port_mappings) if repo.port_mappings else None
         volumes = json.loads(repo.volume_mappings) if repo.volume_mappings else None
         env = json.loads(repo.env_vars) if repo.env_vars else None
         container_name = repo.container_name
-
-        log_file = os.path.join(LOGS_DIR, f"{repo.id}.log")
 
         success, msg = docker_service.build_and_run(
             repo.local_path,
@@ -185,9 +214,12 @@ def process_repo(repo: Repository, db: Session, api_key: str):
         )
 
         if not success:
+            # build_and_run logs to file, so we don't need to duplicate much, but handling error:
+            log_to_file("Job failed during Docker Build/Run.")
             handle_error(repo, db, api_key, "Build/Run Error", msg)
             return
         else:
+            log_to_file("Docker Build/Run successful.")
             repo.status = "active"
             repo.last_error_hash = None # Clear error state
             db.commit()
