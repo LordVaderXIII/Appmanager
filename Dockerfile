@@ -11,6 +11,9 @@ RUN apt-get update && apt-get install -y \
     lsb-release \
     && rm -rf /var/lib/apt/lists/*
 
+# Configure Git to trust all directories (fixes dubious ownership in volumes)
+RUN git config --global --add safe.directory '*'
+
 # Install Docker CLI and Docker Compose Plugin
 RUN mkdir -p /etc/apt/keyrings && \
     curl -fsSL https://download.docker.com/linux/debian/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg && \
