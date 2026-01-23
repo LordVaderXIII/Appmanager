@@ -1,6 +1,10 @@
 import subprocess
 import os
 import shutil
+import requests
+import logging
+
+logger = logging.getLogger(__name__)
 
 class GitService:
     @staticmethod
@@ -89,3 +93,40 @@ class GitService:
             if token:
                  safe_error = safe_error.replace(token, "***")
             return False, f"Pull failed: {safe_error}"
+
+    @staticmethod
+    def get_pr_status(pr_url: str, token: str = None) -> str:
+        """
+        Checks the status of a GitHub PR.
+        Returns: 'merged', 'open', 'closed', or 'unknown'
+        """
+        if not pr_url or "github.com" not in pr_url:
+            return "unknown"
+
+        try:
+            # Convert URL to API URL
+            # https://github.com/owner/repo/pull/123 -> https://api.github.com/repos/owner/repo/pulls/123
+            parts = pr_url.split("github.com/")[-1].split("/")
+            if len(parts) < 4:
+                return "unknown"
+
+            owner, repo, _, pr_number = parts[:4]
+            api_url = f"https://api.github.com/repos/{owner}/{repo}/pulls/{pr_number}"
+
+            headers = {"Accept": "application/vnd.github.v3+json"}
+            if token:
+                headers["Authorization"] = f"token {token}"
+
+            resp = requests.get(api_url, headers=headers)
+            if resp.status_code == 200:
+                data = resp.json()
+                if data.get("merged"):
+                    return "merged"
+                state = data.get("state") # open, closed
+                return state
+            else:
+                logger.warning(f"GitHub API Error: {resp.status_code} - {resp.text}")
+                return "unknown"
+        except Exception as e:
+            logger.error(f"Error checking PR status: {e}")
+            return "unknown"

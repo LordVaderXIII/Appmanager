@@ -2,7 +2,7 @@ from fastapi import FastAPI, Request, Depends, Form, HTTPException, BackgroundTa
 from fastapi.templating import Jinja2Templates
 from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 from apscheduler.schedulers.background import BackgroundScheduler
 import uvicorn
 import logging
@@ -71,6 +71,22 @@ def run_migrations():
                     logger.info("Migrating DB: Adding env_vars to repositories")
                     conn.execute(text("ALTER TABLE repositories ADD COLUMN env_vars TEXT"))
 
+                # Check for new columns in error_logs
+                result = conn.execute(text("PRAGMA table_info(error_logs)"))
+                error_columns = [row[1] for row in result.fetchall()]
+
+                if "jules_session_id" not in error_columns:
+                    logger.info("Migrating DB: Adding jules_session_id to error_logs")
+                    conn.execute(text("ALTER TABLE error_logs ADD COLUMN jules_session_id VARCHAR"))
+
+                if "pr_url" not in error_columns:
+                    logger.info("Migrating DB: Adding pr_url to error_logs")
+                    conn.execute(text("ALTER TABLE error_logs ADD COLUMN pr_url VARCHAR"))
+
+                if "fix_status" not in error_columns:
+                    logger.info("Migrating DB: Adding fix_status to error_logs")
+                    conn.execute(text("ALTER TABLE error_logs ADD COLUMN fix_status VARCHAR DEFAULT 'reported'"))
+
                 conn.commit()
             except Exception as e:
                 logger.warning(f"Migration check failed: {e}")
@@ -135,7 +151,57 @@ def process_repo(repo: Repository, db: Session, api_key: str):
         except Exception as e:
             logger.error(f"Failed to write to log file: {e}")
 
-    # Initialize Log File (Truncate)
+    # 0. Check for Active Error / Jules Session
+    if repo.status == "error":
+        # Find latest error log
+        last_error = db.query(ErrorLog).filter(ErrorLog.repository_id == repo.id).order_by(ErrorLog.timestamp.desc()).first()
+
+        if last_error and last_error.jules_session_id and last_error.fix_status != "resolved":
+            # Append log
+            log_to_file(f"Checking Jules session {last_error.jules_session_id}...")
+
+            # Check Session Status
+            session = JulesService.get_session(api_key, last_error.jules_session_id)
+            if session:
+                state = session.get("state")
+
+                # Update DB if PR created
+                if state == "COMPLETED" and not last_error.pr_url:
+                    outputs = session.get("outputs", [])
+                    for out in outputs:
+                         if "pullRequest" in out:
+                             last_error.pr_url = out["pullRequest"].get("url")
+                             last_error.fix_status = "pr_created"
+                             db.commit()
+                             log_to_file(f"Jules PR Created: {last_error.pr_url}")
+                             break
+
+                # Check PR Status
+                if last_error.pr_url:
+                     pr_status = GitService.get_pr_status(last_error.pr_url, settings.github_token)
+                     if pr_status == "merged":
+                         log_to_file("PR Merged! Resuming normal operation.")
+                         last_error.fix_status = "resolved"
+                         repo.status = "pending" # Trigger rebuild next cycle
+                         repo.last_error_hash = None # Clear error hash
+                         db.commit()
+                         return
+                     else:
+                         log_to_file(f"Waiting for PR merge. Status: {pr_status}")
+                         return # Stop processing, wait for next cycle
+                elif state == "FAILED":
+                    log_to_file("Jules session failed.")
+                    last_error.fix_status = "failed"
+                    db.commit()
+                    return
+                else:
+                    log_to_file(f"Waiting for Jules... State: {state}")
+                    return
+            else:
+                 log_to_file("Could not fetch Jules session.")
+                 return
+
+    # Initialize Log File (Truncate) for fresh runs
     try:
         with open(log_file, "w") as f:
             f.write(f"--- Starting Job for {repo.name or 'Repo ID ' + str(repo.id)} ---\n")
@@ -271,6 +337,9 @@ def handle_error(repo: Repository, db: Session, api_key: str, context: str, deta
     success, jules_msg = JulesService.report_error(api_key, repo.url, repo.name, full_error_text)
     if success:
         logger.info(f"Jules Session Created: {jules_msg}")
+        error_log.jules_session_id = jules_msg
+        error_log.fix_status = "reported"
+        db.commit()
     else:
         logger.error(f"Failed to report to Jules: {jules_msg}")
 
@@ -305,6 +374,14 @@ def settings_page(request: Request, db: Session = Depends(get_db)):
         "api_key": settings.jules_api_key,
         "github_username": settings.github_username,
         "github_token": settings.github_token
+    })
+
+@app.get("/jules/logs", response_class=HTMLResponse)
+def jules_logs_page(request: Request, db: Session = Depends(get_db)):
+    logs = db.query(ErrorLog).options(joinedload(ErrorLog.repository)).order_by(ErrorLog.timestamp.desc()).all()
+    return templates.TemplateResponse("jules_logs.html", {
+        "request": request,
+        "logs": logs
     })
 
 @app.post("/settings")

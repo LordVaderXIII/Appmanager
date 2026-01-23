@@ -103,3 +103,24 @@ class JulesService:
                 break
 
         return None
+
+    @classmethod
+    def get_session(cls, api_key: str, session_name: str):
+        """
+        Retrieves session details.
+        session_name format: sessions/{session_id}
+        """
+        if not api_key:
+            return None
+
+        url = f"{cls.BASE_URL}/{session_name}"
+        try:
+            response = requests.get(
+                url,
+                headers=cls._get_headers(api_key)
+            )
+            response.raise_for_status()
+            return response.json()
+        except Exception as e:
+            logger.error(f"Error fetching session {session_name}: {e}")
+            return None

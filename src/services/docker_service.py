@@ -207,7 +207,8 @@ class DockerService:
         # Default tag from repo name if no custom container name
         tag_name = container_name if container_name else repo_name
         # Sanitize tag name (lowercase, no spaces, restricted chars)
-        tag = "".join(c if c.isalnum() else "_" for c in tag_name).lower()
+        # Allow alphanumeric, hyphens, and dots. Replace others with underscore.
+        tag = "".join(c if c.isalnum() or c in ['-', '.'] else "_" for c in tag_name).lower()
 
         # Build
         success, msg = self._run_cmd(
