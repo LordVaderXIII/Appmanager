@@ -8,6 +8,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from src.models import Base, Repository, Settings, ErrorLog
 from src.main import process_repo, handle_error
+from src.services.docker_service import DockerService
 
 # In-memory DB for testing
 SQLALCHEMY_DATABASE_URL = "sqlite:///:memory:"
@@ -185,6 +186,43 @@ class TestProcessLogs(unittest.TestCase):
 
         # Docker should NOT be called
         mock_docker.build_and_run.assert_not_called()
+
+class TestDockerService(unittest.TestCase):
+    @patch("src.services.docker_service.docker.from_env")
+    @patch("src.services.docker_service.time.sleep")
+    @patch("builtins.open", new_callable=unittest.mock.mock_open)
+    @patch("src.services.docker_service.subprocess.run")
+    def test_race_condition_fix(self, mock_subprocess, mock_open, mock_sleep, mock_docker_env):
+        # Setup
+        mock_client = MagicMock()
+        mock_docker_env.return_value = mock_client
+
+        # Simulate existing container
+        mock_container = MagicMock()
+        mock_client.containers.get.return_value = mock_container
+
+        # Mock run command success
+        mock_subprocess.return_value.returncode = 0
+
+        service = DockerService()
+
+        # Call _handle_dockerfile directly or via build_and_run
+        # _handle_dockerfile is internal but accessible
+        service._handle_dockerfile(
+            path="/tmp",
+            repo_name="test-repo",
+            ports=None, volumes=None, env=None,
+            container_name="test-container",
+            log_filepath="test.log",
+            timeout=300
+        )
+
+        # Verify stop and remove called
+        mock_container.stop.assert_called_once()
+        mock_container.remove.assert_called_once()
+
+        # Verify sleep called with 2 seconds
+        mock_sleep.assert_called_with(2)
 
 if __name__ == "__main__":
     unittest.main()

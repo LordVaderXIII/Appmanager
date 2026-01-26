@@ -3,6 +3,7 @@ import os
 import docker
 import socket
 import logging
+import time
 from typing import List, Dict, Any, Optional
 
 logger = logging.getLogger("DockerService")
@@ -228,6 +229,10 @@ class DockerService:
             existing.stop()
             # Wait for port release?
             existing.remove()
+            if log_filepath:
+                with open(log_filepath, "a") as f:
+                    f.write("\nWaiting 2s for port release...\n")
+            time.sleep(2)
         except docker.errors.NotFound:
             pass
         except Exception as e:
