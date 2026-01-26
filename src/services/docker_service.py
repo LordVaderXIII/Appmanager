@@ -289,7 +289,7 @@ class DockerService:
         else:
              # Use custom container name if provided, else fallback to repo name derivation
              tag_name = container_name if container_name else repo_name
-             tag = "".join(c if c.isalnum() else "_" for c in tag_name).lower()
+             tag = "".join(c if c.isalnum() or c in ['-', '.'] else "_" for c in tag_name).lower()
 
              try:
                  container = self.client.containers.get(tag)

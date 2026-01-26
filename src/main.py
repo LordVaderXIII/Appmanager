@@ -402,6 +402,10 @@ def update_settings(
 def add_repo(
     url: str = Form(...),
     link_container_id: Optional[str] = Form(None),
+    container_name: Optional[str] = Form(None),
+    port_mappings: Optional[str] = Form(None),
+    volume_mappings: Optional[str] = Form(None),
+    env_vars: Optional[str] = Form(None),
     background_tasks: BackgroundTasks = None,
     db: Session = Depends(get_db)
 ):
@@ -415,7 +419,34 @@ def add_repo(
 
     new_repo = Repository(url=url, status="pending")
 
-    if link_container_id:
+    # If configuration is provided via form (Priority)
+    if container_name:
+        # Sanitize container name to match Docker conventions (alphanumeric, -, .)
+        clean_name = "".join(c if c.isalnum() or c in ['-', '.'] else "_" for c in container_name).lower()
+        new_repo.container_name = clean_name
+
+        # Validate and assign JSON strings
+        try:
+            if port_mappings:
+                json.loads(port_mappings) # Validate
+                new_repo.port_mappings = port_mappings
+
+            if volume_mappings:
+                json.loads(volume_mappings) # Validate
+                new_repo.volume_mappings = volume_mappings
+
+            if env_vars:
+                json.loads(env_vars) # Validate
+                new_repo.env_vars = env_vars
+
+        except json.JSONDecodeError:
+            raise HTTPException(status_code=400, detail="Invalid configuration JSON")
+
+        if link_container_id:
+            new_repo.status = "active"
+
+    # Fallback / Old Logic (if no config provided)
+    elif link_container_id:
         # Link Existing Container Logic
         config = docker_service.inspect_container(link_container_id)
         if config:
@@ -433,15 +464,6 @@ def add_repo(
         new_repo.container_name = repo_slug # Default to repo slug
 
         # Auto-Ports
-        # Assuming internal port is 80 (common) or we just map 80/tcp to something?
-        # Without knowing the internal port, we can't map it effectively unless we parse Dockerfile.
-        # But for many apps, we assume some standard or let user configure later.
-        # However, requirement says "intelligently selected".
-        # If we don't know the internal port, we can't map it.
-        # But if we assume 80 or 8080 or look at EXPOSE in Dockerfile later?
-        # For now, let's just pick a free port and map to 80 as a guess, or
-        # leave it empty and let Dockerfile EXPOSE handle it if using -P?
-        # Better: Pick a free port, say 8090, and map 8090->80.
         free_port = docker_service.find_available_port()
         if free_port:
              new_repo.port_mappings = json.dumps({"80/tcp": free_port})
@@ -475,6 +497,48 @@ def delete_repo(repo_id: int, db: Session = Depends(get_db)):
 def trigger_now(background_tasks: BackgroundTasks):
     background_tasks.add_task(check_and_run_repos)
     return RedirectResponse(url="/", status_code=303)
+
+@app.post("/repos/preview")
+def preview_repo_config(
+    url: str = Form(...),
+    link_container_id: Optional[str] = Form(None)
+):
+    """
+    Generates a configuration preview for a new or adopted repository.
+    Returns JSON to be used by the frontend modal.
+    """
+    if link_container_id:
+        config = docker_service.inspect_container(link_container_id)
+        if not config:
+            raise HTTPException(status_code=404, detail="Container not found")
+        return JSONResponse(content=config)
+    else:
+        # Generate Defaults for New App
+        repo_slug = url.split("/")[-1].replace(".git", "")
+        # Sanitize somewhat
+        container_name = "".join(c if c.isalnum() or c in ['-', '.'] else "_" for c in repo_slug).lower()
+
+        ports = {}
+        # Guess internal port 80 maps to a free external port
+        free_port = docker_service.find_available_port()
+        if free_port:
+            ports["80/tcp"] = free_port
+
+        # Default Unraid AppData path
+        host_path = f"/mnt/user/appdata/{container_name}"
+        volumes = {
+            host_path: {"bind": "/config", "mode": "rw"}
+        }
+
+        env = {}
+
+        return JSONResponse(content={
+            "name": container_name,
+            "ports": ports,
+            "volumes": volumes,
+            "env": env,
+            "image": None
+        })
 
 # --- Docker Endpoints ---
 
