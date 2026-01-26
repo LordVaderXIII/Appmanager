@@ -421,7 +421,9 @@ def add_repo(
 
     # If configuration is provided via form (Priority)
     if container_name:
-        new_repo.container_name = container_name
+        # Sanitize container name to match Docker conventions (alphanumeric, -, .)
+        clean_name = "".join(c if c.isalnum() or c in ['-', '.'] else "_" for c in container_name).lower()
+        new_repo.container_name = clean_name
 
         # Validate and assign JSON strings
         try:
