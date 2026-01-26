@@ -53,6 +53,95 @@
     .btn-log:hover {
         background-color: #138496;
     }
+
+    /* Modal Styles */
+    .modal {
+        display: none;
+        position: fixed;
+        z-index: 1000;
+        left: 0;
+        top: 0;
+        width: 100%;
+        height: 100%;
+        overflow: auto;
+        background-color: rgba(0,0,0,0.5);
+    }
+
+    .modal-content {
+        background-color: #fff;
+        margin: 5% auto;
+        padding: 20px;
+        border-radius: 8px;
+        width: 90%;
+        max-width: 800px;
+        box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+    }
+
+    .modal-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        border-bottom: 1px solid #eee;
+        margin-bottom: 1.5rem;
+        padding-bottom: 0.5rem;
+    }
+
+    .modal-header h2 {
+        margin: 0;
+        font-size: 1.5rem;
+        border: none;
+        padding: 0;
+    }
+
+    .close-modal {
+        color: #aaa;
+        font-size: 28px;
+        font-weight: bold;
+        cursor: pointer;
+    }
+
+    .close-modal:hover {
+        color: #000;
+    }
+
+    .config-section {
+        margin-bottom: 1.5rem;
+    }
+
+    .config-section h4 {
+        margin-bottom: 0.5rem;
+        color: #555;
+    }
+
+    .config-row {
+        display: flex;
+        gap: 10px;
+        margin-bottom: 8px;
+        align-items: center;
+    }
+
+    .config-row input {
+        margin-bottom: 0;
+        flex: 1;
+    }
+
+    .btn-remove {
+        color: #dc3545;
+        cursor: pointer;
+        font-weight: bold;
+        padding: 5px 10px;
+        font-size: 1.2rem;
+        line-height: 1;
+    }
+
+    .modal-footer {
+        display: flex;
+        justify-content: flex-end;
+        gap: 10px;
+        border-top: 1px solid #eee;
+        padding-top: 1rem;
+        margin-top: 1rem;
+    }
 </style>
 
 <div class="card">
@@ -65,7 +154,7 @@
         </div>
 
         <div id="new-app" class="tab-content active">
-            <form action="/repos" method="post" style="display: flex; gap: 10px; flex-direction: column;">
+            <form onsubmit="event.preventDefault(); initiateDeploy('new', this);" style="display: flex; gap: 10px; flex-direction: column;">
                 <p style="color: #666; font-size: 0.9rem;">
                     Deploy a new application from a GitHub repository. We'll automatically configure ports and storage for Unraid.
                 </p>
@@ -77,23 +166,15 @@
         </div>
 
         <div id="link-app" class="tab-content">
-             <form action="/repos" method="post" style="display: flex; gap: 10px; flex-direction: column;">
+             <form onsubmit="event.preventDefault(); initiateDeploy('link', this);" style="display: flex; gap: 10px; flex-direction: column;">
                 <p style="color: #666; font-size: 0.9rem;">
                     Link a running Docker container to a GitHub repository to enable automatic updates and management.
                 </p>
 
                 <label for="container-select">Select Running Container:</label>
-                <select id="container-select" name="link_container_id" onchange="previewContainer()" required style="width: 100%; padding: 0.5rem; margin-bottom: 1rem;">
+                <select id="container-select" name="link_container_id" required style="width: 100%; padding: 0.5rem; margin-bottom: 1rem;">
                     <option value="">Loading containers...</option>
                 </select>
-
-                <div id="container-preview" class="hidden" style="background: #f9f9f9; padding: 1rem; border-radius: 4px; margin-bottom: 1rem; font-size: 0.9rem;">
-                    <strong>Details to be adopted:</strong>
-                    <ul style="margin: 0.5rem 0 0 1.5rem; padding: 0;">
-                        <li>Ports: <span id="preview-ports"></span></li>
-                        <li>Volumes: <span id="preview-volumes"></span></li>
-                    </ul>
-                </div>
 
                 <div style="display: flex; gap: 10px;">
                     <input type="text" name="url" placeholder="https://github.com/user/repo.git" required style="margin-bottom: 0; flex-grow: 1;">
@@ -101,6 +182,50 @@
                 </div>
             </form>
         </div>
+    </div>
+</div>
+
+<!-- Config Modal -->
+<div id="config-modal" class="modal">
+    <div class="modal-content">
+        <div class="modal-header">
+            <h2>Configure Application</h2>
+            <span class="close-modal" onclick="closeModal()">&times;</span>
+        </div>
+
+        <form id="config-form" onsubmit="event.preventDefault(); submitConfig();">
+            <input type="hidden" id="conf-source-type">
+            <input type="hidden" id="conf-url">
+            <input type="hidden" id="conf-link-id">
+
+            <div class="config-section">
+                <label>Container Name</label>
+                <input type="text" id="conf-name" required placeholder="app-name">
+            </div>
+
+            <div class="config-section">
+                <h4>Ports (Internal -> External)</h4>
+                <div id="conf-ports-list"></div>
+                <button type="button" class="secondary" style="font-size: 0.8rem;" onclick="addPortRow()">+ Add Port Mapping</button>
+            </div>
+
+            <div class="config-section">
+                <h4>Volumes (Host Path -> Container Path)</h4>
+                <div id="conf-volumes-list"></div>
+                <button type="button" class="secondary" style="font-size: 0.8rem;" onclick="addVolumeRow()">+ Add Volume Mapping</button>
+            </div>
+
+            <div class="config-section">
+                <h4>Environment Variables (Key = Value)</h4>
+                <div id="conf-env-list"></div>
+                <button type="button" class="secondary" style="font-size: 0.8rem;" onclick="addEnvRow()">+ Add Env Var</button>
+            </div>
+
+            <div class="modal-footer">
+                <button type="button" class="secondary" onclick="closeModal()">Cancel</button>
+                <button type="submit" class="primary" id="btn-deploy-confirm">Deploy</button>
+            </div>
+        </form>
     </div>
 </div>
 
@@ -148,11 +273,18 @@
 </div>
 
 <script>
+    // Tab Logic
     function openTab(tabId) {
         document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
+        // Remove active from buttons - handled by caller event usually, but if called directly:
         document.querySelectorAll('.tab-btn').forEach(el => el.classList.remove('active'));
+
         document.getElementById(tabId).classList.add('active');
-        event.currentTarget.classList.add('active');
+
+        // Highlight the button that was clicked
+        if (event && event.currentTarget) {
+            event.currentTarget.classList.add('active');
+        }
 
         if (tabId === 'link-app') {
             loadContainers();
@@ -180,24 +312,188 @@
         }
     }
 
-    async function previewContainer() {
-        const id = document.getElementById('container-select').value;
-        const preview = document.getElementById('container-preview');
+    // Modal Logic
 
-        if (!id) {
-            preview.classList.add('hidden');
-            return;
-        }
+    async function initiateDeploy(type, form) {
+        const formData = new FormData(form);
+        const url = formData.get('url');
+        const linkId = formData.get('link_container_id');
+
+        // Basic Validation
+        if (!url) { alert("Please enter a URL"); return; }
+        if (type === 'link' && !linkId) { alert("Please select a container"); return; }
+
+        document.getElementById('conf-source-type').value = type;
+        document.getElementById('conf-url').value = url;
+        document.getElementById('conf-link-id').value = linkId || '';
+
+        // Fetch Preview
+        const previewFormData = new FormData();
+        previewFormData.append('url', url);
+        if (linkId) previewFormData.append('link_container_id', linkId);
 
         try {
-            const response = await fetch(`/docker/containers/${id}`);
-            const data = await response.json();
+            const res = await fetch('/repos/preview', {
+                method: 'POST',
+                body: previewFormData
+            });
 
-            document.getElementById('preview-ports').textContent = JSON.stringify(data.ports);
-            document.getElementById('preview-volumes').textContent = Object.keys(data.volumes).join(', ');
-            preview.classList.remove('hidden');
+            if (!res.ok) throw new Error("Failed to load preview");
+
+            const data = await res.json();
+            openConfigModal(data);
         } catch (e) {
-            console.error(e);
+            alert("Error loading configuration: " + e.message);
+        }
+    }
+
+    function openConfigModal(data) {
+        document.getElementById('conf-name').value = data.name || '';
+
+        // Clear Lists
+        document.getElementById('conf-ports-list').innerHTML = '';
+        document.getElementById('conf-volumes-list').innerHTML = '';
+        document.getElementById('conf-env-list').innerHTML = '';
+
+        // Populate Ports
+        if (data.ports) {
+            for (const [internal, external] of Object.entries(data.ports)) {
+                addPortRow(internal, external);
+            }
+        }
+
+        // Populate Volumes
+        if (data.volumes) {
+            for (const [host, config] of Object.entries(data.volumes)) {
+                // handle simple path string or object
+                const bind = typeof config === 'string' ? config : config.bind;
+                addVolumeRow(host, bind);
+            }
+        }
+
+        // Populate Env
+        if (data.env) {
+            for (const [key, value] of Object.entries(data.env)) {
+                addEnvRow(key, value);
+            }
+        }
+
+        document.getElementById('config-modal').style.display = "block";
+    }
+
+    function closeModal() {
+        document.getElementById('config-modal').style.display = "none";
+        // Reset button
+        const btn = document.getElementById('btn-deploy-confirm');
+        btn.disabled = false;
+        btn.innerText = "Deploy";
+    }
+
+    // Row Helpers
+
+    function createRow(content) {
+        const div = document.createElement('div');
+        div.className = 'config-row';
+        div.innerHTML = content + '<span class="btn-remove" onclick="removeRow(this)">&times;</span>';
+        return div;
+    }
+
+    function removeRow(btn) {
+        btn.parentElement.remove();
+    }
+
+    function addPortRow(internal = '', external = '') {
+        const html = `
+            <input type="text" placeholder="Internal (e.g. 80/tcp)" value="${internal}" class="port-internal">
+            <span>&rarr;</span>
+            <input type="text" placeholder="External (e.g. 8080)" value="${external}" class="port-external">
+        `;
+        document.getElementById('conf-ports-list').appendChild(createRow(html));
+    }
+
+    function addVolumeRow(host = '', container = '') {
+        const html = `
+            <input type="text" placeholder="Host Path" value="${host}" class="vol-host">
+            <span>&rarr;</span>
+            <input type="text" placeholder="Container Path" value="${container}" class="vol-container">
+        `;
+        document.getElementById('conf-volumes-list').appendChild(createRow(html));
+    }
+
+    function addEnvRow(key = '', value = '') {
+        const html = `
+            <input type="text" placeholder="Key" value="${key}" class="env-key">
+            <span>=</span>
+            <input type="text" placeholder="Value" value="${value}" class="env-value">
+        `;
+        document.getElementById('conf-env-list').appendChild(createRow(html));
+    }
+
+    // Submission
+
+    async function submitConfig() {
+        const btn = document.getElementById('btn-deploy-confirm');
+        btn.disabled = true;
+        btn.innerText = "Deploying...";
+
+        const name = document.getElementById('conf-name').value;
+        const url = document.getElementById('conf-url').value;
+        const linkId = document.getElementById('conf-link-id').value;
+
+        // Scrape Ports
+        const ports = {};
+        document.querySelectorAll('#conf-ports-list .config-row').forEach(row => {
+            const int = row.querySelector('.port-internal').value;
+            const ext = row.querySelector('.port-external').value;
+            if (int && ext) ports[int] = parseInt(ext);
+        });
+
+        // Scrape Volumes
+        const volumes = {};
+        document.querySelectorAll('#conf-volumes-list .config-row').forEach(row => {
+            const host = row.querySelector('.vol-host').value;
+            const cont = row.querySelector('.vol-container').value;
+            if (host && cont) {
+                volumes[host] = { "bind": cont, "mode": "rw" };
+            }
+        });
+
+        // Scrape Env
+        const env = {};
+        document.querySelectorAll('#conf-env-list .config-row').forEach(row => {
+            const key = row.querySelector('.env-key').value;
+            const val = row.querySelector('.env-value').value;
+            if (key) env[key] = val;
+        });
+
+        // Submit Form
+        const form = document.createElement('form');
+        form.method = 'POST';
+        form.action = '/repos';
+
+        const append = (name, val) => {
+            const inp = document.createElement('input');
+            inp.type = 'hidden';
+            inp.name = name;
+            inp.value = val;
+            form.appendChild(inp);
+        };
+
+        append('url', url);
+        if (linkId) append('link_container_id', linkId);
+        append('container_name', name);
+        append('port_mappings', JSON.stringify(ports));
+        append('volume_mappings', JSON.stringify(volumes));
+        append('env_vars', JSON.stringify(env));
+
+        document.body.appendChild(form);
+        form.submit();
+    }
+
+    // Close modal on outside click
+    window.onclick = function(event) {
+        if (event.target == document.getElementById('config-modal')) {
+            closeModal();
         }
     }
 </script>
