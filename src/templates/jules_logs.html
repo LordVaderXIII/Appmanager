@@ -54,9 +54,9 @@
                         {{ log.fix_status }}
                     {% endif %}
                 </td>
-                <td>
+                <td style="white-space: nowrap;">
                     {% if log.pr_url %}
-                        <a href="{{ log.pr_url }}" target="_blank" style="background-color: var(--secondary-color); color: white; padding: 4px 8px; border-radius: 4px; text-decoration: none; font-size: 0.8rem;">View PR</a>
+                        <a href="{{ log.pr_url }}" target="_blank" style="background-color: var(--secondary-color); color: white; padding: 4px 8px; border-radius: 4px; text-decoration: none; font-size: 0.8rem; white-space: nowrap;">View PR</a>
                     {% endif %}
                 </td>
             </tr>
