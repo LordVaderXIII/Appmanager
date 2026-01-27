@@ -226,13 +226,38 @@ class DockerService:
                     f.write(f"\nStopping existing container {tag}...\n")
 
             existing = self.client.containers.get(tag)
-            existing.stop()
-            # Wait for port release?
-            existing.remove()
+            try:
+                existing.stop()
+            except Exception:
+                pass # Proceed to remove
+
+            try:
+                existing.remove()
+            except docker.errors.APIError as e:
+                # Handle "removal in progress" race condition
+                if e.status_code == 409 and "removal" in str(e) and "in progress" in str(e):
+                    if log_filepath:
+                        with open(log_filepath, "a") as f:
+                            f.write("\nRemoval in progress... waiting for container to exit...\n")
+
+                    # Wait for container to be gone (max 30s)
+                    start_wait = time.time()
+                    while time.time() - start_wait < 30:
+                        try:
+                            self.client.containers.get(tag)
+                            time.sleep(1)
+                        except docker.errors.NotFound:
+                            break # Gone
+                    else:
+                        raise Exception("Timeout waiting for container removal")
+                else:
+                    raise e
+
             if log_filepath:
                 with open(log_filepath, "a") as f:
                     f.write("\nWaiting 2s for port release...\n")
             time.sleep(2)
+
         except docker.errors.NotFound:
             pass
         except Exception as e:
