@@ -56,7 +56,15 @@
                 </td>
                 <td style="white-space: nowrap;">
                     {% if log.pr_url %}
-                        <a href="{{ log.pr_url }}" target="_blank" style="background-color: var(--secondary-color); color: white; padding: 4px 8px; border-radius: 4px; text-decoration: none; font-size: 0.8rem; white-space: nowrap;">View PR</a>
+                        <a href="{{ log.pr_url }}" target="_blank" style="background-color: var(--secondary-color); color: white; padding: 4px 8px; border-radius: 4px; text-decoration: none; font-size: 0.8rem; white-space: nowrap; margin-right: 5px;">View PR</a>
+                    {% endif %}
+                    {% if log.fix_status != 'resolved' %}
+                        <form action="/jules/logs/{{ log.id }}/recheck" method="post" style="display:inline;">
+                            <button type="submit" style="background-color: #f0ad4e; color: white; border: none; padding: 4px 8px; border-radius: 4px; cursor: pointer; font-size: 0.8rem; margin-right: 5px;">Recheck</button>
+                        </form>
+                        <form action="/jules/logs/{{ log.id }}/ignore" method="post" style="display:inline;">
+                            <button type="submit" style="background-color: #d9534f; color: white; border: none; padding: 4px 8px; border-radius: 4px; cursor: pointer; font-size: 0.8rem;">Ignore</button>
+                        </form>
                     {% endif %}
                 </td>
             </tr>

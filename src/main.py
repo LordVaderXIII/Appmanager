@@ -384,6 +384,50 @@ def jules_logs_page(request: Request, db: Session = Depends(get_db)):
         "logs": logs
     })
 
+@app.post("/jules/logs/{log_id}/ignore")
+def ignore_log(log_id: int, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
+    log = db.query(ErrorLog).filter(ErrorLog.id == log_id).first()
+    if not log:
+        raise HTTPException(status_code=404, detail="Log not found")
+
+    settings = get_settings(db)
+
+    # 1. Close PR if exists
+    if log.pr_url:
+        GitService.close_pr(log.pr_url, settings.github_token)
+
+    # 2. Mark Log as Resolved
+    log.fix_status = "resolved"
+
+    # 3. Reset Repository to Pending (so it retries)
+    if log.repository:
+        log.repository.last_error_hash = None
+        log.repository.status = "pending"
+        # Trigger check
+        background_tasks.add_task(check_and_run_repos)
+
+    db.commit()
+    return RedirectResponse(url="/jules/logs", status_code=303)
+
+@app.post("/jules/logs/{log_id}/recheck")
+def recheck_log(log_id: int, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
+    log = db.query(ErrorLog).filter(ErrorLog.id == log_id).first()
+    if not log:
+        raise HTTPException(status_code=404, detail="Log not found")
+
+    # 1. Mark Log as Resolved (to unblock process_repo)
+    log.fix_status = "resolved"
+
+    # 2. Reset Repository to Pending
+    if log.repository:
+        log.repository.last_error_hash = None
+        log.repository.status = "pending"
+        # Trigger check
+        background_tasks.add_task(check_and_run_repos)
+
+    db.commit()
+    return RedirectResponse(url="/jules/logs", status_code=303)
+
 @app.post("/settings")
 def update_settings(
     api_key: str = Form(""),
