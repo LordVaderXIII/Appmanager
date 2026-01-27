@@ -3,6 +3,7 @@ import unittest
 import os
 import shutil
 import tempfile
+import subprocess
 from unittest.mock import MagicMock, patch
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
@@ -188,11 +189,16 @@ class TestProcessLogs(unittest.TestCase):
         mock_docker.build_and_run.assert_not_called()
 
 class TestDockerService(unittest.TestCase):
+    def setUp(self):
+        self.temp_dir = tempfile.mkdtemp()
+
+    def tearDown(self):
+        shutil.rmtree(self.temp_dir)
+
     @patch("src.services.docker_service.docker.from_env")
     @patch("src.services.docker_service.time.sleep")
-    @patch("builtins.open", new_callable=unittest.mock.mock_open)
     @patch("src.services.docker_service.subprocess.run")
-    def test_race_condition_fix(self, mock_subprocess, mock_open, mock_sleep, mock_docker_env):
+    def test_race_condition_fix(self, mock_subprocess, mock_sleep, mock_docker_env):
         # Setup
         mock_client = MagicMock()
         mock_docker_env.return_value = mock_client
@@ -206,14 +212,13 @@ class TestDockerService(unittest.TestCase):
 
         service = DockerService()
 
-        # Call _handle_dockerfile directly or via build_and_run
-        # _handle_dockerfile is internal but accessible
+        # Call _handle_dockerfile directly
         service._handle_dockerfile(
-            path="/tmp",
+            path=self.temp_dir,
             repo_name="test-repo",
             ports=None, volumes=None, env=None,
             container_name="test-container",
-            log_filepath="test.log",
+            log_filepath=None,
             timeout=300
         )
 
@@ -221,8 +226,101 @@ class TestDockerService(unittest.TestCase):
         mock_container.stop.assert_called_once()
         mock_container.remove.assert_called_once()
 
-        # Verify sleep called with 2 seconds
-        mock_sleep.assert_called_with(2)
+        # Verify sleep is NOT called (removed feature)
+        mock_sleep.assert_not_called()
+
+    @patch("src.services.docker_service.docker.from_env")
+    @patch("src.services.docker_service.time.sleep")
+    @patch("src.services.docker_service.subprocess.run")
+    def test_retry_logic_compose(self, mock_subprocess, mock_sleep, mock_docker_env):
+        service = DockerService()
+        log_filepath = os.path.join(self.temp_dir, "test.log")
+
+        call_counter = {"count": 0}
+        def side_effect(*args, **kwargs):
+            cmd = args[0]
+            if "build" in cmd:
+                return MagicMock(returncode=0)
+            if "up" in cmd:
+                call_counter["count"] += 1
+                if call_counter["count"] == 1:
+                    # First UP fails, simulate writing error to log file (since we passed log_filepath)
+                    f = kwargs.get('stdout')
+                    if f:
+                        f.write("Bind for 0.0.0.0:80 failed: port is already allocated\n")
+                        f.flush()
+                    raise subprocess.CalledProcessError(1, cmd)
+                else:
+                    # Retry succeeds
+                    return MagicMock(returncode=0)
+            return MagicMock(returncode=0)
+
+        mock_subprocess.side_effect = side_effect
+
+        service._handle_compose(
+            path=self.temp_dir,
+            compose_file="docker-compose.yml",
+            log_filepath=log_filepath,
+            timeout=300
+        )
+
+        # Verify sleep called once (5s) for the retry
+        mock_sleep.assert_called_with(5)
+
+        # Verify call count: 1 build + 2 ups = 3 calls
+        self.assertEqual(mock_subprocess.call_count, 3)
+
+    @patch("src.services.docker_service.docker.from_env")
+    @patch("src.services.docker_service.time.sleep")
+    @patch("src.services.docker_service.subprocess.run")
+    def test_retry_logic_dockerfile(self, mock_subprocess, mock_sleep, mock_docker_env):
+        # Setup
+        import docker
+        mock_client = MagicMock()
+        mock_docker_env.return_value = mock_client
+
+        # Build mock (subprocess) needs to succeed
+        mock_subprocess.return_value.returncode = 0
+
+        # Run mock needs to fail then succeed
+        # Mock client.containers.run
+
+        # Error instance with status code for is_client_error() check
+        response = MagicMock()
+        response.status_code = 500
+        # The explanation is what typically appears in the string representation for 500 errors
+        api_error = docker.errors.APIError(
+            "Bind error",
+            response=response,
+            explanation="Bind for 0.0.0.0:80 failed: port is already allocated"
+        )
+
+        # Side effect: Raise, then Return Container
+        mock_client.containers.run.side_effect = [api_error, MagicMock()]
+
+        # Setup get return value for cleanup
+        mock_failed_container = MagicMock()
+        mock_client.containers.get.return_value = mock_failed_container
+
+        service = DockerService()
+
+        service._handle_dockerfile(
+            path=self.temp_dir,
+            repo_name="test",
+            ports={}, volumes={}, env={},
+            container_name="test",
+            log_filepath=None,
+            timeout=300
+        )
+
+        # Verify sleep called once
+        mock_sleep.assert_called_with(5)
+
+        # Verify run called twice
+        self.assertEqual(mock_client.containers.run.call_count, 2)
+
+        # Verify cleanup called on failed attempt
+        mock_failed_container.remove.assert_called_with(force=True)
 
 if __name__ == "__main__":
     unittest.main()
