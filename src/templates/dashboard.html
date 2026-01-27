@@ -142,6 +142,20 @@
         padding-top: 1rem;
         margin-top: 1rem;
     }
+
+    .log-viewer {
+        background-color: #f8f9fa;
+        color: #333;
+        padding: 1rem;
+        border: 1px solid #ddd;
+        border-radius: 4px;
+        font-family: monospace;
+        white-space: pre-wrap;
+        word-wrap: break-word;
+        max-height: 60vh;
+        overflow-y: auto;
+        font-size: 0.9rem;
+    }
 </style>
 
 <div class="card">
@@ -229,6 +243,24 @@
     </div>
 </div>
 
+<!-- Log Modal -->
+<div id="log-modal" class="modal">
+    <div class="modal-content" style="max-width: 900px;">
+        <div class="modal-header">
+            <h2 id="log-modal-title">Logs</h2>
+            <span class="close-modal" onclick="closeLogsModal()">&times;</span>
+        </div>
+
+        <pre id="log-content" class="log-viewer">Loading logs...</pre>
+
+        <div class="modal-footer">
+             <button type="button" class="secondary" onclick="fetchLogs()">Refresh</button>
+             <button type="button" class="secondary" onclick="downloadLogs()">Download</button>
+             <button type="button" class="primary" onclick="closeLogsModal()">Close</button>
+        </div>
+    </div>
+</div>
+
 <div class="card">
     <div class="flex-row">
         <h2>Monitored Repositories</h2>
@@ -256,7 +288,7 @@
                 <td class="status-{{ repo.status }}">{{ repo.status|capitalize }}</td>
                 <td>
                     <div class="action-group">
-                        <a href="/repos/{{ repo.id }}/logs/build" target="_blank" class="btn-log">Logs</a>
+                        <a href="#" onclick="openLogsModal({{ repo.id }}, '{{ repo.name }}'); return false;" class="btn-log">Logs</a>
                         <form action="/repos/{{ repo.id }}/delete" method="post" onsubmit="return confirm('Are you sure you want to delete {{ repo.name }}?');" style="margin: 0;">
                             <button type="submit" class="danger" style="padding: 0.25rem 0.5rem; font-size: 0.875rem;">Remove</button>
                         </form>
@@ -490,10 +522,65 @@
         form.submit();
     }
 
+    // Log Modal Logic
+    let currentRepoId = null;
+    let currentRepoName = null;
+
+    function openLogsModal(repoId, repoName) {
+        currentRepoId = repoId;
+        currentRepoName = repoName;
+        document.getElementById('log-modal-title').innerText = 'Logs: ' + repoName;
+        document.getElementById('log-modal').style.display = "block";
+        fetchLogs();
+    }
+
+    function closeLogsModal() {
+        document.getElementById('log-modal').style.display = "none";
+        currentRepoId = null;
+        document.getElementById('log-content').innerText = "Loading logs...";
+    }
+
+    async function fetchLogs() {
+        if (!currentRepoId) return;
+        const viewer = document.getElementById('log-content');
+        viewer.innerText = "Refreshing...";
+
+        try {
+            const res = await fetch(`/repos/${currentRepoId}/logs/build`);
+            if (res.ok) {
+                const text = await res.text();
+                viewer.innerText = text || "No logs available.";
+                // Auto scroll to bottom
+                viewer.scrollTop = viewer.scrollHeight;
+            } else {
+                viewer.innerText = "Failed to load logs.";
+            }
+        } catch (e) {
+            viewer.innerText = "Error fetching logs: " + e.message;
+        }
+    }
+
+    function downloadLogs() {
+        if (!currentRepoId) return;
+        const text = document.getElementById('log-content').innerText;
+        const blob = new Blob([text], { type: 'text/plain' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `${currentRepoName || 'repo'}_build.log`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+    }
+
     // Close modal on outside click
     window.onclick = function(event) {
         if (event.target == document.getElementById('config-modal')) {
             closeModal();
+        }
+        if (event.target == document.getElementById('log-modal')) {
+            closeLogsModal();
         }
     }
 </script>
