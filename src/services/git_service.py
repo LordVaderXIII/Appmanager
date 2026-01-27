@@ -130,3 +130,36 @@ class GitService:
         except Exception as e:
             logger.error(f"Error checking PR status: {e}")
             return "unknown"
+
+    @staticmethod
+    def close_pr(pr_url: str, token: str = None) -> bool:
+        """
+        Closes a GitHub PR.
+        """
+        if not pr_url or not token or "github.com" not in pr_url:
+            return False
+
+        try:
+            # Convert URL to API URL
+            parts = pr_url.split("github.com/")[-1].split("/")
+            if len(parts) < 4:
+                return False
+
+            owner, repo, _, pr_number = parts[:4]
+            api_url = f"https://api.github.com/repos/{owner}/{repo}/pulls/{pr_number}"
+
+            headers = {
+                "Accept": "application/vnd.github.v3+json",
+                "Authorization": f"token {token}"
+            }
+
+            resp = requests.patch(api_url, headers=headers, json={"state": "closed"})
+            if resp.status_code == 200:
+                logger.info(f"Closed PR: {pr_url}")
+                return True
+            else:
+                logger.warning(f"Failed to close PR: {resp.status_code} - {resp.text}")
+                return False
+        except Exception as e:
+            logger.error(f"Error closing PR: {e}")
+            return False
