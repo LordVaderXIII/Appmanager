@@ -151,87 +151,29 @@ class DockerService:
             if f_handle:
                 f_handle.close()
 
-    def build_and_run(self, repo_path: str, repo_name: str,
-                      ports: Optional[Dict] = None,
-                      volumes: Optional[Dict] = None,
-                      env: Optional[Dict] = None,
-                      container_name: Optional[str] = None,
-                      log_filepath: Optional[str] = None,
-                      timeout: int = 300):
+    def _cleanup_containers(self, target_tag: str, additional_names: Optional[List[str]] = None, log_filepath: Optional[str] = None):
         """
-        Builds and runs the project.
-        Returns: (success: bool, logs: str)
+        Stops and removes containers that match the target_tag (clean name)
+        or are listed in additional_names.
         """
-        # Append to log file (initialized by orchestrator)
-        if log_filepath:
-            try:
-                with open(log_filepath, "a") as f:
-                    f.write(f"\nStarting Docker build/run for {repo_name}...\n")
-            except Exception as e:
-                logger.error(f"Could not write to log file {log_filepath}: {e}")
-
-        compose_file = self.get_compose_file(repo_path)
-
-        if compose_file:
-            return self._handle_compose(repo_path, compose_file, log_filepath, timeout)
-        elif os.path.exists(os.path.join(repo_path, "Dockerfile")):
-            return self._handle_dockerfile(repo_path, repo_name, ports, volumes, env, container_name, log_filepath, timeout)
-        else:
-            return False, "No Dockerfile or docker-compose.yml found."
-
-    def _handle_compose(self, path: str, compose_file: str, log_filepath: str, timeout: int):
-        # Build
-        success, msg = self._run_cmd(
-            ["docker", "compose", "-f", compose_file, "build"],
-            cwd=path, log_filepath=log_filepath, timeout=timeout
-        )
-        if not success:
-            return False, msg
-
-        # Up
-        success, msg = self._run_cmd(
-            ["docker", "compose", "-f", compose_file, "up", "-d"],
-            cwd=path, log_filepath=log_filepath, timeout=timeout
-        )
-        if not success:
-            return False, msg
-
-        return True, "Compose Up Successful"
-
-    def _handle_dockerfile(self, path: str, repo_name: str,
-                           ports: Optional[Dict],
-                           volumes: Optional[Dict],
-                           env: Optional[Dict],
-                           container_name: Optional[str],
-                           log_filepath: str,
-                           timeout: int):
-        # Default tag from repo name if no custom container name
-        tag_name = container_name if container_name else repo_name
-        # Sanitize tag name (lowercase, no spaces, restricted chars)
-        # Allow alphanumeric, hyphens, and dots. Replace others with underscore.
-        tag = "".join(c if c.isalnum() or c in ['-', '.'] else "_" for c in tag_name).lower()
-
-        # Build
-        success, msg = self._run_cmd(
-            ["docker", "build", "-t", tag, "."],
-            cwd=path, log_filepath=log_filepath, timeout=timeout
-        )
-        if not success:
-            return False, msg
-
-        # Stop existing containers (conflicting names)
         containers_to_stop = set()
-        containers_to_stop.add(tag)
-        if container_name and container_name != tag:
-            containers_to_stop.add(container_name)
+        containers_to_stop.add(target_tag)
+        if additional_names:
+            for name in additional_names:
+                if name:
+                    containers_to_stop.add(name)
 
         # Scan all containers to find case-insensitive matches or exact matches
         try:
             all_containers = self.client.containers.list(all=True)
             for c in all_containers:
+                # Handle leading slash which sometimes appears
+                c_name = c.name.lstrip('/')
+
                 # If container name matches target tag exactly or via normalization
-                c_name_clean = "".join(x if x.isalnum() or x in ['-', '.'] else "_" for x in c.name).lower()
-                if c.name in containers_to_stop or c_name_clean == tag:
+                c_name_clean = "".join(x if x.isalnum() or x in ['-', '.'] else "_" for x in c_name).lower()
+
+                if c_name in containers_to_stop or c_name_clean == target_tag:
                     containers_to_stop.add(c.name)
         except Exception as e:
             logger.warning(f"Failed to scan existing containers: {e}")
@@ -286,6 +228,88 @@ class DockerService:
                 if log_filepath:
                     with open(log_filepath, "a") as f:
                          f.write(f"\nWarning: Could not stop/remove {target}: {e}\n")
+
+    def build_and_run(self, repo_path: str, repo_name: str,
+                      ports: Optional[Dict] = None,
+                      volumes: Optional[Dict] = None,
+                      env: Optional[Dict] = None,
+                      container_name: Optional[str] = None,
+                      log_filepath: Optional[str] = None,
+                      timeout: int = 300):
+        """
+        Builds and runs the project.
+        Returns: (success: bool, logs: str)
+        """
+        # Append to log file (initialized by orchestrator)
+        if log_filepath:
+            try:
+                with open(log_filepath, "a") as f:
+                    f.write(f"\nStarting Docker build/run for {repo_name}...\n")
+            except Exception as e:
+                logger.error(f"Could not write to log file {log_filepath}: {e}")
+
+        compose_file = self.get_compose_file(repo_path)
+
+        if compose_file:
+            return self._handle_compose(repo_path, compose_file, log_filepath, timeout, container_name=container_name, repo_name=repo_name)
+        elif os.path.exists(os.path.join(repo_path, "Dockerfile")):
+            return self._handle_dockerfile(repo_path, repo_name, ports, volumes, env, container_name, log_filepath, timeout)
+        else:
+            return False, "No Dockerfile or docker-compose.yml found."
+
+    def _handle_compose(self, path: str, compose_file: str, log_filepath: str, timeout: int, container_name: Optional[str] = None, repo_name: Optional[str] = None):
+        # Build
+        success, msg = self._run_cmd(
+            ["docker", "compose", "-f", compose_file, "build"],
+            cwd=path, log_filepath=log_filepath, timeout=timeout
+        )
+        if not success:
+            return False, msg
+
+        # Clean up existing containers if possible
+        target_name = container_name if container_name else repo_name
+        if target_name:
+            # Sanitize tag name
+            clean_name = "".join(c if c.isalnum() or c in ['-', '.'] else "_" for c in target_name).lower()
+            self._cleanup_containers(clean_name, [target_name], log_filepath)
+
+        # Up
+        success, msg = self._run_cmd(
+            ["docker", "compose", "-f", compose_file, "up", "-d"],
+            cwd=path, log_filepath=log_filepath, timeout=timeout
+        )
+        if not success:
+            return False, msg
+
+        return True, "Compose Up Successful"
+
+    def _handle_dockerfile(self, path: str, repo_name: str,
+                           ports: Optional[Dict],
+                           volumes: Optional[Dict],
+                           env: Optional[Dict],
+                           container_name: Optional[str],
+                           log_filepath: str,
+                           timeout: int):
+        # Default tag from repo name if no custom container name
+        tag_name = container_name if container_name else repo_name
+        # Sanitize tag name (lowercase, no spaces, restricted chars)
+        # Allow alphanumeric, hyphens, and dots. Replace others with underscore.
+        tag = "".join(c if c.isalnum() or c in ['-', '.'] else "_" for c in tag_name).lower()
+
+        # Build
+        success, msg = self._run_cmd(
+            ["docker", "build", "-t", tag, "."],
+            cwd=path, log_filepath=log_filepath, timeout=timeout
+        )
+        if not success:
+            return False, msg
+
+        # Stop existing containers (conflicting names)
+        additional_names = []
+        if container_name and container_name != tag:
+            additional_names.append(container_name)
+
+        self._cleanup_containers(tag, additional_names, log_filepath)
 
         # Run with Config
         try:
