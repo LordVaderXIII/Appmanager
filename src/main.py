@@ -10,6 +10,7 @@ import os
 import hashlib
 import json
 import datetime
+import threading
 from typing import List, Optional
 
 from .database import engine, Base, get_db
@@ -103,6 +104,10 @@ templates = Jinja2Templates(directory="src/templates")
 # Scheduler
 scheduler = BackgroundScheduler()
 
+# Job Locking
+active_jobs = set()
+jobs_lock = threading.Lock()
+
 # Global Services
 docker_service = DockerService()
 
@@ -136,6 +141,20 @@ def check_and_run_repos():
     db.close()
 
 def process_repo(repo: Repository, db: Session, api_key: str):
+    # Job Locking Check
+    with jobs_lock:
+        if repo.id in active_jobs:
+            logger.info(f"Job for repo {repo.name} (ID: {repo.id}) is already running. Skipping.")
+            return
+        active_jobs.add(repo.id)
+
+    try:
+        _process_repo_internal(repo, db, api_key)
+    finally:
+        with jobs_lock:
+            active_jobs.remove(repo.id)
+
+def _process_repo_internal(repo: Repository, db: Session, api_key: str):
     # Retrieve settings for Git Auth
     settings = get_settings(db)
 
