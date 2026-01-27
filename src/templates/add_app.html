@@ -1,0 +1,334 @@
+{% extends "layout.html" %}
+
+{% block title %}Add Application - App Manager{% endblock %}
+
+{% block content %}
+
+<div class="header-large">
+    <h1>Add Application</h1>
+</div>
+
+<div class="segmented-control-container">
+    <div class="segmented-control">
+        <button class="segment active" onclick="switchSegment('new-app', this)">New App</button>
+        <button class="segment" onclick="switchSegment('link-app', this)">Link Existing</button>
+    </div>
+</div>
+
+<div id="new-app" class="segment-content active">
+    <div class="card-group">
+        <p class="card-desc">
+            Deploy a new application from a GitHub repository. We'll automatically configure ports and storage for Unraid.
+        </p>
+        <form onsubmit="event.preventDefault(); initiateDeploy('new', this);">
+            <div class="list-group">
+                <div class="list-item">
+                    <input type="url" name="url" placeholder="https://github.com/user/repo.git" required class="no-border">
+                </div>
+            </div>
+            <div class="form-actions">
+                <button type="submit" class="btn-primary full-width">Deploy New App</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<div id="link-app" class="segment-content">
+    <div class="card-group">
+         <p class="card-desc">
+            Link a running Docker container to a GitHub repository to enable automatic updates.
+        </p>
+        <form onsubmit="event.preventDefault(); initiateDeploy('link', this);">
+             <div class="list-group">
+                <div class="list-item">
+                     <select id="container-select" name="link_container_id" required class="no-border">
+                        <option value="">Loading containers...</option>
+                    </select>
+                </div>
+                <div class="list-item">
+                    <input type="url" name="url" placeholder="https://github.com/user/repo.git" required class="no-border">
+                </div>
+            </div>
+            <div class="form-actions">
+                <button type="submit" class="btn-primary full-width">Link & Manage</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- Config Modal -->
+<div id="config-modal" class="modal">
+    <div class="modal-content">
+        <div class="modal-header">
+            <h2>Configure Application</h2>
+            <span class="close-modal" onclick="closeModal()">&times;</span>
+        </div>
+
+        <form id="config-form" onsubmit="event.preventDefault(); submitConfig();">
+            <input type="hidden" id="conf-source-type">
+            <input type="hidden" id="conf-url">
+            <input type="hidden" id="conf-link-id">
+
+            <div class="config-section">
+                <label>Container Name</label>
+                <div class="list-group">
+                    <div class="list-item">
+                        <input type="text" id="conf-name" required placeholder="app-name" class="no-border">
+                    </div>
+                </div>
+            </div>
+
+            <div class="config-section">
+                <h4>Ports (Internal &rarr; External)</h4>
+                <div id="conf-ports-list"></div>
+                <button type="button" class="btn-secondary small" onclick="addPortRow()">+ Add Port Mapping</button>
+            </div>
+
+            <div class="config-section">
+                <h4>Volumes (Host &rarr; Container)</h4>
+                <div id="conf-volumes-list"></div>
+                <button type="button" class="btn-secondary small" onclick="addVolumeRow()">+ Add Volume Mapping</button>
+            </div>
+
+            <div class="config-section">
+                <h4>Environment Variables (Key = Value)</h4>
+                <div id="conf-env-list"></div>
+                <button type="button" class="btn-secondary small" onclick="addEnvRow()">+ Add Env Var</button>
+            </div>
+
+            <div class="modal-footer">
+                <button type="button" class="btn-secondary" onclick="closeModal()">Cancel</button>
+                <button type="submit" class="btn-primary" id="btn-deploy-confirm">Deploy</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<script>
+    function switchSegment(id, btn) {
+        document.querySelectorAll('.segment-content').forEach(el => el.classList.remove('active'));
+        document.querySelectorAll('.segment').forEach(el => el.classList.remove('active'));
+
+        document.getElementById(id).classList.add('active');
+        btn.classList.add('active');
+
+        if (id === 'link-app') loadContainers();
+    }
+
+    async function loadContainers() {
+        const select = document.getElementById('container-select');
+        // Prevent reload if already loaded
+        if (select.options.length > 1) return;
+
+        select.innerHTML = '<option value="">Loading...</option>';
+
+        try {
+            const response = await fetch('/docker/containers');
+            const containers = await response.json();
+
+            select.innerHTML = '<option value="">Select a Container</option>';
+            containers.forEach(c => {
+                const option = document.createElement('option');
+                option.value = c.id;
+                option.text = `${c.name} (${c.image})`;
+                select.appendChild(option);
+            });
+        } catch (e) {
+            select.innerHTML = '<option value="">Error loading containers</option>';
+            console.error(e);
+        }
+    }
+
+    async function initiateDeploy(type, form) {
+        const formData = new FormData(form);
+        const url = formData.get('url');
+        const linkId = formData.get('link_container_id');
+
+        // Basic Validation
+        if (!url) { alert("Please enter a URL"); return; }
+        if (type === 'link' && !linkId) { alert("Please select a container"); return; }
+
+        document.getElementById('conf-source-type').value = type;
+        document.getElementById('conf-url').value = url;
+        document.getElementById('conf-link-id').value = linkId || '';
+
+        // Fetch Preview
+        const previewFormData = new FormData();
+        previewFormData.append('url', url);
+        if (linkId) previewFormData.append('link_container_id', linkId);
+
+        try {
+            const res = await fetch('/repos/preview', {
+                method: 'POST',
+                body: previewFormData
+            });
+
+            if (!res.ok) throw new Error("Failed to load preview");
+
+            const data = await res.json();
+            openConfigModal(data);
+        } catch (e) {
+            alert("Error loading configuration: " + e.message);
+        }
+    }
+
+    function openConfigModal(data) {
+        document.getElementById('conf-name').value = data.name || '';
+
+        // Clear Lists
+        document.getElementById('conf-ports-list').innerHTML = '';
+        document.getElementById('conf-volumes-list').innerHTML = '';
+        document.getElementById('conf-env-list').innerHTML = '';
+
+        // Populate Ports
+        if (data.ports) {
+            for (const [internal, external] of Object.entries(data.ports)) {
+                addPortRow(internal, external);
+            }
+        }
+
+        // Populate Volumes
+        if (data.volumes) {
+            for (const [host, config] of Object.entries(data.volumes)) {
+                // handle simple path string or object
+                const bind = typeof config === 'string' ? config : config.bind;
+                addVolumeRow(host, bind);
+            }
+        }
+
+        // Populate Env
+        if (data.env) {
+            for (const [key, value] of Object.entries(data.env)) {
+                addEnvRow(key, value);
+            }
+        }
+
+        document.getElementById('config-modal').style.display = "block";
+    }
+
+    function closeModal() {
+        document.getElementById('config-modal').style.display = "none";
+        const btn = document.getElementById('btn-deploy-confirm');
+        btn.disabled = false;
+        btn.innerText = "Deploy";
+    }
+
+    function createRow(content) {
+        const div = document.createElement('div');
+        div.className = 'config-row list-group mb-2';
+        div.style.display = "flex";
+        div.style.alignItems = "center";
+        div.innerHTML = content + '<span class="btn-remove" onclick="removeRow(this)">&times;</span>';
+        return div;
+    }
+
+    function removeRow(btn) {
+        btn.parentElement.remove();
+    }
+
+    function addPortRow(internal = '', external = '') {
+        const html = `
+            <div class="list-item" style="flex:1">
+                <input type="text" placeholder="Internal (80/tcp)" value="${internal}" class="port-internal no-border">
+            </div>
+            <span style="padding: 0 10px">&rarr;</span>
+            <div class="list-item" style="flex:1">
+                <input type="text" placeholder="External (8080)" value="${external}" class="port-external no-border">
+            </div>
+        `;
+        document.getElementById('conf-ports-list').appendChild(createRow(html));
+    }
+
+    function addVolumeRow(host = '', container = '') {
+        const html = `
+            <div class="list-item" style="flex:1">
+                <input type="text" placeholder="Host Path" value="${host}" class="vol-host no-border">
+            </div>
+            <span style="padding: 0 10px">&rarr;</span>
+            <div class="list-item" style="flex:1">
+                <input type="text" placeholder="Container Path" value="${container}" class="vol-container no-border">
+            </div>
+        `;
+        document.getElementById('conf-volumes-list').appendChild(createRow(html));
+    }
+
+    function addEnvRow(key = '', value = '') {
+        const html = `
+            <div class="list-item" style="flex:1">
+                <input type="text" placeholder="Key" value="${key}" class="env-key no-border">
+            </div>
+            <span style="padding: 0 10px">=</span>
+            <div class="list-item" style="flex:1">
+                <input type="text" placeholder="Value" value="${value}" class="env-value no-border">
+            </div>
+        `;
+        document.getElementById('conf-env-list').appendChild(createRow(html));
+    }
+
+    async function submitConfig() {
+        const btn = document.getElementById('btn-deploy-confirm');
+        btn.disabled = true;
+        btn.innerText = "Deploying...";
+
+        const name = document.getElementById('conf-name').value;
+        const url = document.getElementById('conf-url').value;
+        const linkId = document.getElementById('conf-link-id').value;
+
+        // Scrape Ports
+        const ports = {};
+        document.querySelectorAll('#conf-ports-list .config-row').forEach(row => {
+            const int = row.querySelector('.port-internal').value;
+            const ext = row.querySelector('.port-external').value;
+            if (int && ext) ports[int] = parseInt(ext);
+        });
+
+        // Scrape Volumes
+        const volumes = {};
+        document.querySelectorAll('#conf-volumes-list .config-row').forEach(row => {
+            const host = row.querySelector('.vol-host').value;
+            const cont = row.querySelector('.vol-container').value;
+            if (host && cont) {
+                volumes[host] = { "bind": cont, "mode": "rw" };
+            }
+        });
+
+        // Scrape Env
+        const env = {};
+        document.querySelectorAll('#conf-env-list .config-row').forEach(row => {
+            const key = row.querySelector('.env-key').value;
+            const val = row.querySelector('.env-value').value;
+            if (key) env[key] = val;
+        });
+
+        // Submit Form
+        const form = document.createElement('form');
+        form.method = 'POST';
+        form.action = '/repos';
+
+        const append = (name, val) => {
+            const inp = document.createElement('input');
+            inp.type = 'hidden';
+            inp.name = name;
+            inp.value = val;
+            form.appendChild(inp);
+        };
+
+        append('url', url);
+        if (linkId) append('link_container_id', linkId);
+        append('container_name', name);
+        append('port_mappings', JSON.stringify(ports));
+        append('volume_mappings', JSON.stringify(volumes));
+        append('env_vars', JSON.stringify(env));
+
+        document.body.appendChild(form);
+        form.submit();
+    }
+
+    // Close modal on outside click
+    window.onclick = function(event) {
+        if (event.target == document.getElementById('config-modal')) {
+            closeModal();
+        }
+    }
+</script>
+{% endblock %}
