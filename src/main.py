@@ -389,9 +389,29 @@ def shutdown_event():
 @app.get("/", response_class=HTMLResponse)
 def dashboard(request: Request, db: Session = Depends(get_db)):
     repos = db.query(Repository).all()
+
+    # Process repos to find external port for "Open" link
+    for repo in repos:
+        repo.web_port = None
+        if repo.port_mappings:
+            try:
+                ports = json.loads(repo.port_mappings)
+                if ports:
+                    # Take the first external port found
+                    # Structure: {"80/tcp": 8080}
+                    repo.web_port = list(ports.values())[0]
+            except Exception:
+                pass
+
     return templates.TemplateResponse("dashboard.html", {
         "request": request,
         "repos": repos
+    })
+
+@app.get("/add", response_class=HTMLResponse)
+def add_app_page(request: Request):
+    return templates.TemplateResponse("add_app.html", {
+        "request": request
     })
 
 @app.get("/settings", response_class=HTMLResponse)

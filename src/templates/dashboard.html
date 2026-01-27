@@ -4,532 +4,88 @@
 
 {% block content %}
 
-<style>
-    .tab-container {
-        margin-bottom: 1rem;
-    }
-    .tab-header {
-        display: flex;
-        border-bottom: 1px solid #ddd;
-    }
-    .tab-btn {
-        padding: 0.75rem 1.5rem;
-        cursor: pointer;
-        background: none;
-        border: none;
-        border-bottom: 3px solid transparent;
-        font-weight: bold;
-        color: #666;
-    }
-    .tab-btn.active {
-        border-bottom-color: #007bff;
-        color: #007bff;
-    }
-    .tab-content {
-        display: none;
-        padding-top: 1rem;
-    }
-    .tab-content.active {
-        display: block;
-    }
-    .hidden {
-        display: none;
-    }
-    .action-group {
-        display: flex;
-        gap: 5px;
-        align-items: center;
-    }
-    .btn-log {
-        background-color: #17a2b8;
-        color: white;
-        text-decoration: none;
-        padding: 0.25rem 0.5rem;
-        font-size: 0.875rem;
-        border-radius: 0.25rem;
-        display: inline-block;
-        line-height: 1.5;
-    }
-    .btn-log:hover {
-        background-color: #138496;
-    }
+<div class="header-large">
+    <h1>Dashboard</h1>
+</div>
 
-    /* Modal Styles */
-    .modal {
-        display: none;
-        position: fixed;
-        z-index: 1000;
-        left: 0;
-        top: 0;
-        width: 100%;
-        height: 100%;
-        overflow: auto;
-        background-color: rgba(0,0,0,0.5);
-    }
-
-    .modal-content {
-        background-color: #fff;
-        margin: 5% auto;
-        padding: 20px;
-        border-radius: 8px;
-        width: 90%;
-        max-width: 800px;
-        box-shadow: 0 4px 6px rgba(0,0,0,0.1);
-    }
-
-    .modal-header {
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        border-bottom: 1px solid #eee;
-        margin-bottom: 1.5rem;
-        padding-bottom: 0.5rem;
-    }
-
-    .modal-header h2 {
-        margin: 0;
-        font-size: 1.5rem;
-        border: none;
-        padding: 0;
-    }
-
-    .close-modal {
-        color: #aaa;
-        font-size: 28px;
-        font-weight: bold;
-        cursor: pointer;
-    }
-
-    .close-modal:hover {
-        color: #000;
-    }
-
-    .config-section {
-        margin-bottom: 1.5rem;
-    }
-
-    .config-section h4 {
-        margin-bottom: 0.5rem;
-        color: #555;
-    }
-
-    .config-row {
-        display: flex;
-        gap: 10px;
-        margin-bottom: 8px;
-        align-items: center;
-    }
-
-    .config-row input {
-        margin-bottom: 0;
-        flex: 1;
-    }
-
-    .btn-remove {
-        color: #dc3545;
-        cursor: pointer;
-        font-weight: bold;
-        padding: 5px 10px;
-        font-size: 1.2rem;
-        line-height: 1;
-    }
-
-    .modal-footer {
-        display: flex;
-        justify-content: flex-end;
-        gap: 10px;
-        border-top: 1px solid #eee;
-        padding-top: 1rem;
-        margin-top: 1rem;
-    }
-
-    .log-viewer {
-        background-color: #f8f9fa;
-        color: #333;
-        padding: 1rem;
-        border: 1px solid #ddd;
-        border-radius: 4px;
-        font-family: monospace;
-        white-space: pre-wrap;
-        word-wrap: break-word;
-        max-height: 60vh;
-        overflow-y: auto;
-        font-size: 0.9rem;
-    }
-</style>
-
-<div class="card">
-    <h2>Add Application</h2>
-
-    <div class="tab-container">
-        <div class="tab-header">
-            <button class="tab-btn active" onclick="openTab('new-app')">New App</button>
-            <button class="tab-btn" onclick="openTab('link-app')">Link Existing Container</button>
-        </div>
-
-        <div id="new-app" class="tab-content active">
-            <form onsubmit="event.preventDefault(); initiateDeploy('new', this);" style="display: flex; gap: 10px; flex-direction: column;">
-                <p style="color: #666; font-size: 0.9rem;">
-                    Deploy a new application from a GitHub repository. We'll automatically configure ports and storage for Unraid.
-                </p>
-                <div style="display: flex; gap: 10px;">
-                    <input type="text" name="url" placeholder="https://github.com/user/repo.git" required style="margin-bottom: 0; flex-grow: 1;">
-                    <button type="submit" class="primary">Deploy New App</button>
-                </div>
-            </form>
-        </div>
-
-        <div id="link-app" class="tab-content">
-             <form onsubmit="event.preventDefault(); initiateDeploy('link', this);" style="display: flex; gap: 10px; flex-direction: column;">
-                <p style="color: #666; font-size: 0.9rem;">
-                    Link a running Docker container to a GitHub repository to enable automatic updates and management.
-                </p>
-
-                <label for="container-select">Select Running Container:</label>
-                <select id="container-select" name="link_container_id" required style="width: 100%; padding: 0.5rem; margin-bottom: 1rem;">
-                    <option value="">Loading containers...</option>
-                </select>
-
-                <div style="display: flex; gap: 10px;">
-                    <input type="text" name="url" placeholder="https://github.com/user/repo.git" required style="margin-bottom: 0; flex-grow: 1;">
-                    <button type="submit" class="primary">Link & Manage</button>
-                </div>
-            </form>
-        </div>
+<div class="list-group">
+    <div class="list-item">
+        <span style="font-weight: 600; font-size: 17px;">Monitored Repositories</span>
+        <form action="/repos/trigger" method="post" style="margin: 0;">
+            <button type="submit" class="btn-secondary small">Check Updates</button>
+        </form>
     </div>
 </div>
 
-<!-- Config Modal -->
-<div id="config-modal" class="modal">
-    <div class="modal-content">
-        <div class="modal-header">
-            <h2>Configure Application</h2>
-            <span class="close-modal" onclick="closeModal()">&times;</span>
+<div class="list-group">
+    {% for repo in repos %}
+    <div class="list-item">
+        <div style="flex: 1; min-width: 0; padding-right: 15px;">
+            <div style="font-weight: 600; font-size: 16px; margin-bottom: 2px;">{{ repo.name }}</div>
+            <div style="font-size: 13px; color: var(--text-secondary); margin-bottom: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">
+                {{ repo.url }}
+            </div>
+            <div style="display: flex; align-items: center; gap: 8px;">
+                <span class="status-{{ repo.status }}" style="font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px;">
+                    {{ repo.status }}
+                </span>
+                {% if repo.container_name %}
+                <span style="font-size: 12px; color: var(--text-secondary);">• {{ repo.container_name }}</span>
+                {% endif %}
+            </div>
         </div>
 
-        <form id="config-form" onsubmit="event.preventDefault(); submitConfig();">
-            <input type="hidden" id="conf-source-type">
-            <input type="hidden" id="conf-url">
-            <input type="hidden" id="conf-link-id">
+        <div style="display: flex; gap: 10px; align-items: center;">
+            {% if repo.web_port %}
+            <a href="http://{{ request.url.hostname }}:{{ repo.web_port }}" target="_blank" class="btn-secondary small">
+                Open
+            </a>
+            {% endif %}
 
-            <div class="config-section">
-                <label>Container Name</label>
-                <input type="text" id="conf-name" required placeholder="app-name">
-            </div>
+            <a href="#" onclick="openLogsModal({{ repo.id }}, '{{ repo.name }}'); return false;" style="color: var(--text-secondary); padding: 5px;">
+                <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line><polyline points="10 9 9 9 8 9"></polyline></svg>
+            </a>
 
-            <div class="config-section">
-                <h4>Ports (Internal -> External)</h4>
-                <div id="conf-ports-list"></div>
-                <button type="button" class="secondary" style="font-size: 0.8rem;" onclick="addPortRow()">+ Add Port Mapping</button>
-            </div>
-
-            <div class="config-section">
-                <h4>Volumes (Host Path -> Container Path)</h4>
-                <div id="conf-volumes-list"></div>
-                <button type="button" class="secondary" style="font-size: 0.8rem;" onclick="addVolumeRow()">+ Add Volume Mapping</button>
-            </div>
-
-            <div class="config-section">
-                <h4>Environment Variables (Key = Value)</h4>
-                <div id="conf-env-list"></div>
-                <button type="button" class="secondary" style="font-size: 0.8rem;" onclick="addEnvRow()">+ Add Env Var</button>
-            </div>
-
-            <div class="modal-footer">
-                <button type="button" class="secondary" onclick="closeModal()">Cancel</button>
-                <button type="submit" class="primary" id="btn-deploy-confirm">Deploy</button>
-            </div>
-        </form>
+            <form action="/repos/{{ repo.id }}/delete" method="post" onsubmit="return confirm('Are you sure you want to delete {{ repo.name }}?');" style="margin: 0;">
+                <button type="submit" class="btn-danger">
+                    <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>
+                </button>
+            </form>
+        </div>
     </div>
+    {% else %}
+    <div class="list-item" style="justify-content: center; padding: 30px; color: var(--text-secondary);">
+        No repositories added yet. Tap "Add App" to get started.
+    </div>
+    {% endfor %}
 </div>
 
 <!-- Log Modal -->
 <div id="log-modal" class="modal">
-    <div class="modal-content" style="max-width: 900px;">
+    <div class="modal-content" style="max-width: 900px; height: 80vh; display: flex; flex-direction: column;">
         <div class="modal-header">
-            <h2 id="log-modal-title">Logs</h2>
-            <span class="close-modal" onclick="closeLogsModal()">&times;</span>
+            <h2 id="log-modal-title" style="margin:0; font-size: 18px;">Logs</h2>
+            <span class="close-modal" onclick="closeLogsModal()" style="font-size: 24px;">&times;</span>
         </div>
 
-        <pre id="log-content" class="log-viewer">Loading logs...</pre>
+        <pre id="log-content" class="log-viewer" style="flex: 1; margin: 0; border: none; border-radius: 0;">Loading logs...</pre>
 
-        <div class="modal-footer">
-             <button type="button" class="secondary" onclick="fetchLogs()">Refresh</button>
-             <button type="button" class="secondary" onclick="downloadLogs()">Download</button>
-             <button type="button" class="primary" onclick="closeLogsModal()">Close</button>
+        <div class="modal-footer" style="background-color: var(--bg-tertiary);">
+             <button type="button" class="btn-secondary small" onclick="fetchLogs()">Refresh</button>
+             <button type="button" class="btn-secondary small" onclick="downloadLogs()">Download</button>
+             <button type="button" class="btn-primary" onclick="closeLogsModal()" style="padding: 6px 16px; font-size: 14px;">Done</button>
         </div>
     </div>
-</div>
-
-<div class="card">
-    <div class="flex-row">
-        <h2>Monitored Repositories</h2>
-        <form action="/repos/trigger" method="post" style="margin: 0;">
-            <button type="submit" class="secondary">Check Updates Now</button>
-        </form>
-    </div>
-
-    <table>
-        <thead>
-            <tr>
-                <th>Name</th>
-                <th>Container</th>
-                <th>URL</th>
-                <th>Status</th>
-                <th>Actions</th>
-            </tr>
-        </thead>
-        <tbody>
-            {% for repo in repos %}
-            <tr>
-                <td>{{ repo.name }}</td>
-                <td><small>{{ repo.container_name or '-' }}</small></td>
-                <td><a href="{{ repo.url }}" target="_blank" style="color: #007bff; text-decoration: none;">{{ repo.url }}</a></td>
-                <td class="status-{{ repo.status }}">{{ repo.status|capitalize }}</td>
-                <td>
-                    <div class="action-group">
-                        <a href="#" onclick="openLogsModal({{ repo.id }}, '{{ repo.name }}'); return false;" class="btn-log">Logs</a>
-                        <form action="/repos/{{ repo.id }}/delete" method="post" onsubmit="return confirm('Are you sure you want to delete {{ repo.name }}?');" style="margin: 0;">
-                            <button type="submit" class="danger" style="padding: 0.25rem 0.5rem; font-size: 0.875rem;">Remove</button>
-                        </form>
-                    </div>
-                </td>
-            </tr>
-            {% else %}
-            <tr>
-                <td colspan="5" style="text-align: center; color: #777; padding: 2rem;">No repositories added yet.</td>
-            </tr>
-            {% endfor %}
-        </tbody>
-    </table>
 </div>
 
 <script>
-    // Tab Logic
-    function openTab(tabId) {
-        document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
-        // Remove active from buttons - handled by caller event usually, but if called directly:
-        document.querySelectorAll('.tab-btn').forEach(el => el.classList.remove('active'));
-
-        document.getElementById(tabId).classList.add('active');
-
-        // Highlight the button that was clicked
-        if (event && event.currentTarget) {
-            event.currentTarget.classList.add('active');
-        }
-
-        if (tabId === 'link-app') {
-            loadContainers();
-        }
-    }
-
-    async function loadContainers() {
-        const select = document.getElementById('container-select');
-        select.innerHTML = '<option value="">Loading...</option>';
-
-        try {
-            const response = await fetch('/docker/containers');
-            const containers = await response.json();
-
-            select.innerHTML = '<option value="">-- Select a Container --</option>';
-            containers.forEach(c => {
-                const option = document.createElement('option');
-                option.value = c.id;
-                option.text = `${c.name} (${c.image})`;
-                select.appendChild(option);
-            });
-        } catch (e) {
-            select.innerHTML = '<option value="">Error loading containers</option>';
-            console.error(e);
-        }
-    }
-
-    // Modal Logic
-
-    async function initiateDeploy(type, form) {
-        const formData = new FormData(form);
-        const url = formData.get('url');
-        const linkId = formData.get('link_container_id');
-
-        // Basic Validation
-        if (!url) { alert("Please enter a URL"); return; }
-        if (type === 'link' && !linkId) { alert("Please select a container"); return; }
-
-        document.getElementById('conf-source-type').value = type;
-        document.getElementById('conf-url').value = url;
-        document.getElementById('conf-link-id').value = linkId || '';
-
-        // Fetch Preview
-        const previewFormData = new FormData();
-        previewFormData.append('url', url);
-        if (linkId) previewFormData.append('link_container_id', linkId);
-
-        try {
-            const res = await fetch('/repos/preview', {
-                method: 'POST',
-                body: previewFormData
-            });
-
-            if (!res.ok) throw new Error("Failed to load preview");
-
-            const data = await res.json();
-            openConfigModal(data);
-        } catch (e) {
-            alert("Error loading configuration: " + e.message);
-        }
-    }
-
-    function openConfigModal(data) {
-        document.getElementById('conf-name').value = data.name || '';
-
-        // Clear Lists
-        document.getElementById('conf-ports-list').innerHTML = '';
-        document.getElementById('conf-volumes-list').innerHTML = '';
-        document.getElementById('conf-env-list').innerHTML = '';
-
-        // Populate Ports
-        if (data.ports) {
-            for (const [internal, external] of Object.entries(data.ports)) {
-                addPortRow(internal, external);
-            }
-        }
-
-        // Populate Volumes
-        if (data.volumes) {
-            for (const [host, config] of Object.entries(data.volumes)) {
-                // handle simple path string or object
-                const bind = typeof config === 'string' ? config : config.bind;
-                addVolumeRow(host, bind);
-            }
-        }
-
-        // Populate Env
-        if (data.env) {
-            for (const [key, value] of Object.entries(data.env)) {
-                addEnvRow(key, value);
-            }
-        }
-
-        document.getElementById('config-modal').style.display = "block";
-    }
-
-    function closeModal() {
-        document.getElementById('config-modal').style.display = "none";
-        // Reset button
-        const btn = document.getElementById('btn-deploy-confirm');
-        btn.disabled = false;
-        btn.innerText = "Deploy";
-    }
-
-    // Row Helpers
-
-    function createRow(content) {
-        const div = document.createElement('div');
-        div.className = 'config-row';
-        div.innerHTML = content + '<span class="btn-remove" onclick="removeRow(this)">&times;</span>';
-        return div;
-    }
-
-    function removeRow(btn) {
-        btn.parentElement.remove();
-    }
-
-    function addPortRow(internal = '', external = '') {
-        const html = `
-            <input type="text" placeholder="Internal (e.g. 80/tcp)" value="${internal}" class="port-internal">
-            <span>&rarr;</span>
-            <input type="text" placeholder="External (e.g. 8080)" value="${external}" class="port-external">
-        `;
-        document.getElementById('conf-ports-list').appendChild(createRow(html));
-    }
-
-    function addVolumeRow(host = '', container = '') {
-        const html = `
-            <input type="text" placeholder="Host Path" value="${host}" class="vol-host">
-            <span>&rarr;</span>
-            <input type="text" placeholder="Container Path" value="${container}" class="vol-container">
-        `;
-        document.getElementById('conf-volumes-list').appendChild(createRow(html));
-    }
-
-    function addEnvRow(key = '', value = '') {
-        const html = `
-            <input type="text" placeholder="Key" value="${key}" class="env-key">
-            <span>=</span>
-            <input type="text" placeholder="Value" value="${value}" class="env-value">
-        `;
-        document.getElementById('conf-env-list').appendChild(createRow(html));
-    }
-
-    // Submission
-
-    async function submitConfig() {
-        const btn = document.getElementById('btn-deploy-confirm');
-        btn.disabled = true;
-        btn.innerText = "Deploying...";
-
-        const name = document.getElementById('conf-name').value;
-        const url = document.getElementById('conf-url').value;
-        const linkId = document.getElementById('conf-link-id').value;
-
-        // Scrape Ports
-        const ports = {};
-        document.querySelectorAll('#conf-ports-list .config-row').forEach(row => {
-            const int = row.querySelector('.port-internal').value;
-            const ext = row.querySelector('.port-external').value;
-            if (int && ext) ports[int] = parseInt(ext);
-        });
-
-        // Scrape Volumes
-        const volumes = {};
-        document.querySelectorAll('#conf-volumes-list .config-row').forEach(row => {
-            const host = row.querySelector('.vol-host').value;
-            const cont = row.querySelector('.vol-container').value;
-            if (host && cont) {
-                volumes[host] = { "bind": cont, "mode": "rw" };
-            }
-        });
-
-        // Scrape Env
-        const env = {};
-        document.querySelectorAll('#conf-env-list .config-row').forEach(row => {
-            const key = row.querySelector('.env-key').value;
-            const val = row.querySelector('.env-value').value;
-            if (key) env[key] = val;
-        });
-
-        // Submit Form
-        const form = document.createElement('form');
-        form.method = 'POST';
-        form.action = '/repos';
-
-        const append = (name, val) => {
-            const inp = document.createElement('input');
-            inp.type = 'hidden';
-            inp.name = name;
-            inp.value = val;
-            form.appendChild(inp);
-        };
-
-        append('url', url);
-        if (linkId) append('link_container_id', linkId);
-        append('container_name', name);
-        append('port_mappings', JSON.stringify(ports));
-        append('volume_mappings', JSON.stringify(volumes));
-        append('env_vars', JSON.stringify(env));
-
-        document.body.appendChild(form);
-        form.submit();
-    }
-
-    // Log Modal Logic
     let currentRepoId = null;
     let currentRepoName = null;
 
     function openLogsModal(repoId, repoName) {
         currentRepoId = repoId;
         currentRepoName = repoName;
-        document.getElementById('log-modal-title').innerText = 'Logs: ' + repoName;
+        document.getElementById('log-modal-title').innerText = repoName;
         document.getElementById('log-modal').style.display = "block";
         fetchLogs();
     }
@@ -543,14 +99,12 @@
     async function fetchLogs() {
         if (!currentRepoId) return;
         const viewer = document.getElementById('log-content');
-        viewer.innerText = "Refreshing...";
 
         try {
             const res = await fetch(`/repos/${currentRepoId}/logs/build`);
             if (res.ok) {
                 const text = await res.text();
                 viewer.innerText = text || "No logs available.";
-                // Auto scroll to bottom
                 viewer.scrollTop = viewer.scrollHeight;
             } else {
                 viewer.innerText = "Failed to load logs.";
@@ -576,9 +130,6 @@
 
     // Close modal on outside click
     window.onclick = function(event) {
-        if (event.target == document.getElementById('config-modal')) {
-            closeModal();
-        }
         if (event.target == document.getElementById('log-modal')) {
             closeLogsModal();
         }

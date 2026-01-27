@@ -3,73 +3,66 @@
 {% block title %}Jules Logs - App Manager{% endblock %}
 
 {% block content %}
-<div class="card">
-    <h2>Jules Integration Logs</h2>
-    <p>History of automated error reports and fix sessions.</p>
+<div class="header-large">
+    <h1>Jules Logs</h1>
+</div>
 
-    <table>
-        <thead>
-            <tr>
-                <th>Time</th>
-                <th>Repository</th>
-                <th>Error</th>
-                <th>Session ID</th>
-                <th>Status</th>
-                <th>Action</th>
-            </tr>
-        </thead>
-        <tbody>
-            {% for log in logs %}
-            <tr>
-                <td>{{ log.timestamp.strftime('%Y-%m-%d %H:%M') }}</td>
-                <td>
-                    {% if log.repository %}
-                        <a href="{{ log.repository.url }}" target="_blank">{{ log.repository.name }}</a>
-                    {% else %}
-                        Deleted Repo ({{ log.repository_id }})
-                    {% endif %}
-                </td>
-                <td>
-                    <div title="{{ log.error_message }}" style="max-width: 300px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: help;">
-                        {{ log.error_message.split('\n')[0] }}
-                    </div>
-                </td>
-                <td>
-                    {% if log.jules_session_id %}
-                        {{ log.jules_session_id }}
-                    {% else %}
-                        -
-                    {% endif %}
-                </td>
-                <td>
-                    {% if log.fix_status == 'resolved' %}
-                        <span class="status-active">Resolved</span>
-                    {% elif log.fix_status == 'pr_created' %}
-                        <span class="status-building">PR Created</span>
-                    {% elif log.fix_status == 'reported' %}
-                        <span class="status-pending">Analyzing</span>
-                    {% elif log.fix_status == 'failed' %}
-                        <span class="status-error">Failed</span>
-                    {% else %}
-                        {{ log.fix_status }}
-                    {% endif %}
-                </td>
-                <td style="white-space: nowrap;">
-                    {% if log.pr_url %}
-                        <a href="{{ log.pr_url }}" target="_blank" style="background-color: var(--secondary-color); color: white; padding: 4px 8px; border-radius: 4px; text-decoration: none; font-size: 0.8rem; white-space: nowrap; margin-right: 5px;">View PR</a>
-                    {% endif %}
-                    {% if log.fix_status != 'resolved' %}
-                        <form action="/jules/logs/{{ log.id }}/recheck" method="post" style="display:inline;">
-                            <button type="submit" style="background-color: #f0ad4e; color: white; border: none; padding: 4px 8px; border-radius: 4px; cursor: pointer; font-size: 0.8rem; margin-right: 5px;">Recheck</button>
-                        </form>
-                        <form action="/jules/logs/{{ log.id }}/ignore" method="post" style="display:inline;">
-                            <button type="submit" style="background-color: #d9534f; color: white; border: none; padding: 4px 8px; border-radius: 4px; cursor: pointer; font-size: 0.8rem;">Ignore</button>
-                        </form>
-                    {% endif %}
-                </td>
-            </tr>
-            {% endfor %}
-        </tbody>
-    </table>
+<div class="list-group">
+    {% for log in logs %}
+    <div class="list-item" style="flex-direction: column; align-items: flex-start; gap: 10px; padding: 16px;">
+        <div style="width: 100%; display: flex; justify-content: space-between; align-items: center;">
+            <div style="font-weight: 600; font-size: 15px;">
+                 {% if log.repository %}
+                    {{ log.repository.name }}
+                 {% else %}
+                    Deleted Repo ({{ log.repository_id }})
+                 {% endif %}
+            </div>
+            <div style="color: var(--text-secondary); font-size: 12px;">
+                {{ log.timestamp.strftime('%m-%d %H:%M') }}
+            </div>
+        </div>
+
+        <div style="font-family: monospace; font-size: 12px; color: #ddd; background: var(--bg-tertiary); padding: 8px; border-radius: 6px; width: 100%; box-sizing: border-box; overflow-x: hidden; text-overflow: ellipsis; white-space: nowrap;">
+            {{ log.error_message.split('\n')[0] }}
+        </div>
+
+        <div style="width: 100%; display: flex; justify-content: space-between; align-items: center; margin-top: 4px;">
+            <div style="font-size: 13px; color: var(--text-secondary);">
+                Status:
+                {% if log.fix_status == 'resolved' %}
+                    <span class="status-active">Resolved</span>
+                {% elif log.fix_status == 'pr_created' %}
+                    <span class="status-building">PR Created</span>
+                {% elif log.fix_status == 'reported' %}
+                    <span class="status-pending">Analyzing</span>
+                {% elif log.fix_status == 'failed' %}
+                    <span class="status-error">Failed</span>
+                {% else %}
+                    {{ log.fix_status|capitalize }}
+                {% endif %}
+            </div>
+
+            <div style="display: flex; gap: 8px;">
+                {% if log.pr_url %}
+                <a href="{{ log.pr_url }}" target="_blank" class="btn-secondary small">View PR</a>
+                {% endif %}
+
+                {% if log.fix_status != 'resolved' %}
+                <form action="/jules/logs/{{ log.id }}/recheck" method="post" style="margin:0;">
+                    <button type="submit" class="btn-secondary small" style="color: var(--warning-color);">Recheck</button>
+                </form>
+                <form action="/jules/logs/{{ log.id }}/ignore" method="post" style="margin:0;">
+                    <button type="submit" class="btn-secondary small" style="color: var(--danger-color);">Ignore</button>
+                </form>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+    {% else %}
+    <div class="list-item" style="justify-content: center; padding: 30px; color: var(--text-secondary);">
+        No history available.
+    </div>
+    {% endfor %}
 </div>
 {% endblock %}
