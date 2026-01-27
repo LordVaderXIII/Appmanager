@@ -285,6 +285,15 @@ def _process_repo_internal(repo: Repository, db: Session, api_key: str):
         ports = json.loads(repo.port_mappings) if repo.port_mappings else None
         volumes = json.loads(repo.volume_mappings) if repo.volume_mappings else None
         env = json.loads(repo.env_vars) if repo.env_vars else None
+
+        # Normalize container name if needed (DB Cleanup)
+        if repo.container_name:
+             clean_name = "".join(c if c.isalnum() or c in ['-', '.'] else "_" for c in repo.container_name).lower()
+             if repo.container_name != clean_name:
+                 logger.info(f"Normalizing container name for {repo.name}: {repo.container_name} -> {clean_name}")
+                 repo.container_name = clean_name
+                 db.commit()
+
         container_name = repo.container_name
 
         success, msg = docker_service.build_and_run(
@@ -513,12 +522,18 @@ def add_repo(
         # Link Existing Container Logic
         config = docker_service.inspect_container(link_container_id)
         if config:
-            new_repo.container_name = config["name"]
+            # Normalize adopted name
+            raw_name = config["name"]
+            # Handle potential leading slash from docker inspect
+            if raw_name.startswith("/"):
+                raw_name = raw_name[1:]
+
+            new_repo.container_name = "".join(c if c.isalnum() or c in ['-', '.'] else "_" for c in raw_name).lower()
             new_repo.port_mappings = json.dumps(config["ports"])
             new_repo.volume_mappings = json.dumps(config["volumes"])
             new_repo.env_vars = json.dumps(config["env"])
             logger.info(f"Adopted config from container {config['name']}")
-            new_repo.status = "active" # Don't rebuild immediately
+            new_repo.status = "pending" # Trigger rebuild to enforce name normalization
     else:
         # New App Logic - Auto Configuration
         # Derive name from URL

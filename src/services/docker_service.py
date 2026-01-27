@@ -219,52 +219,73 @@ class DockerService:
         if not success:
             return False, msg
 
-        # Stop existing container if running
+        # Stop existing containers (conflicting names)
+        containers_to_stop = set()
+        containers_to_stop.add(tag)
+        if container_name and container_name != tag:
+            containers_to_stop.add(container_name)
+
+        # Scan all containers to find case-insensitive matches or exact matches
         try:
-            if log_filepath:
-                with open(log_filepath, "a") as f:
-                    f.write(f"\nStopping existing container {tag}...\n")
-
-            existing = self.client.containers.get(tag)
-            try:
-                existing.stop()
-            except Exception:
-                pass # Proceed to remove
-
-            try:
-                existing.remove()
-            except docker.errors.APIError as e:
-                # Handle "removal in progress" race condition
-                if e.status_code == 409 and "removal" in str(e) and "in progress" in str(e):
-                    if log_filepath:
-                        with open(log_filepath, "a") as f:
-                            f.write("\nRemoval in progress... waiting for container to exit...\n")
-
-                    # Wait for container to be gone (max 30s)
-                    start_wait = time.time()
-                    while time.time() - start_wait < 30:
-                        try:
-                            self.client.containers.get(tag)
-                            time.sleep(1)
-                        except docker.errors.NotFound:
-                            break # Gone
-                    else:
-                        raise Exception("Timeout waiting for container removal")
-                else:
-                    raise e
-
-            if log_filepath:
-                with open(log_filepath, "a") as f:
-                    f.write("\nWaiting 2s for port release...\n")
-            time.sleep(2)
-
-        except docker.errors.NotFound:
-            pass
+            all_containers = self.client.containers.list(all=True)
+            for c in all_containers:
+                # If container name matches target tag exactly or via normalization
+                c_name_clean = "".join(x if x.isalnum() or x in ['-', '.'] else "_" for x in c.name).lower()
+                if c.name in containers_to_stop or c_name_clean == tag:
+                    containers_to_stop.add(c.name)
         except Exception as e:
-            logger.warning(f"Could not stop/remove existing container {tag}: {e}")
-            if log_filepath:
-                with open(log_filepath, "a") as f:
-                     f.write(f"\nWarning: Could not stop/remove existing container: {e}\n")
+            logger.warning(f"Failed to scan existing containers: {e}")
+
+        for target in containers_to_stop:
+            try:
+                if log_filepath:
+                    with open(log_filepath, "a") as f:
+                        f.write(f"\nChecking/Stopping existing container {target}...\n")
+
+                try:
+                    existing = self.client.containers.get(target)
+                except docker.errors.NotFound:
+                    continue
+
+                try:
+                    existing.stop()
+                except Exception:
+                    pass # Proceed to remove
+
+                try:
+                    existing.remove()
+                except docker.errors.APIError as e:
+                    # Handle "removal in progress" race condition
+                    if e.status_code == 409 and "removal" in str(e) and "in progress" in str(e):
+                        if log_filepath:
+                            with open(log_filepath, "a") as f:
+                                f.write(f"\nRemoval of {target} in progress... waiting...\n")
+
+                        # Wait for container to be gone (max 30s)
+                        start_wait = time.time()
+                        while time.time() - start_wait < 30:
+                            try:
+                                self.client.containers.get(target)
+                                time.sleep(1)
+                            except docker.errors.NotFound:
+                                break # Gone
+                        else:
+                            raise Exception(f"Timeout waiting for container {target} removal")
+                    else:
+                        raise e
+
+                if log_filepath:
+                    with open(log_filepath, "a") as f:
+                        f.write(f"\nRemoved container {target}.\n")
+
+                # Small sleep to ensure port release
+                time.sleep(2)
+
+            except Exception as e:
+                logger.warning(f"Could not stop/remove existing container {target}: {e}")
+                if log_filepath:
+                    with open(log_filepath, "a") as f:
+                         f.write(f"\nWarning: Could not stop/remove {target}: {e}\n")
 
         # Run with Config
         try:
