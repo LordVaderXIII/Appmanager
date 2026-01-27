@@ -167,9 +167,13 @@ class DockerService:
         try:
             all_containers = self.client.containers.list(all=True)
             for c in all_containers:
+                # Handle leading slash which sometimes appears
+                c_name = c.name.lstrip('/')
+
                 # If container name matches target tag exactly or via normalization
-                c_name_clean = "".join(x if x.isalnum() or x in ['-', '.'] else "_" for x in c.name).lower()
-                if c.name in containers_to_stop or c_name_clean == target_tag:
+                c_name_clean = "".join(x if x.isalnum() or x in ['-', '.'] else "_" for x in c_name).lower()
+
+                if c_name in containers_to_stop or c_name_clean == target_tag:
                     containers_to_stop.add(c.name)
         except Exception as e:
             logger.warning(f"Failed to scan existing containers: {e}")
