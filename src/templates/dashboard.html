@@ -134,5 +134,17 @@
             closeLogsModal();
         }
     }
+
+    // Auto Refresh Logic (2 seconds)
+    setInterval(function() {
+        const modal = document.getElementById('log-modal');
+        if (modal.style.display === "block") {
+            // If logs are open, refresh logs
+            fetchLogs();
+        } else {
+            // If logs are closed, refresh the dashboard page
+            window.location.reload();
+        }
+    }, 2000);
 </script>
 {% endblock %}
