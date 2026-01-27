@@ -220,9 +220,6 @@ class DockerService:
                     with open(log_filepath, "a") as f:
                         f.write(f"\nRemoved container {target}.\n")
 
-                # Small sleep to ensure port release
-                time.sleep(2)
-
             except Exception as e:
                 logger.warning(f"Could not stop/remove existing container {target}: {e}")
                 if log_filepath:
@@ -274,10 +271,42 @@ class DockerService:
             self._cleanup_containers(clean_name, [target_name], log_filepath)
 
         # Up
-        success, msg = self._run_cmd(
-            ["docker", "compose", "-f", compose_file, "up", "-d"],
-            cwd=path, log_filepath=log_filepath, timeout=timeout
-        )
+        max_retries = 12
+        success = False
+        msg = ""
+
+        for i in range(max_retries):
+            success, msg = self._run_cmd(
+                ["docker", "compose", "-f", compose_file, "up", "-d"],
+                cwd=path, log_filepath=log_filepath, timeout=timeout
+            )
+            if success:
+                break
+
+            # Check for port allocation errors
+            # If logging to file, msg from _run_cmd is generic. Check log file content.
+            check_content = msg
+            if log_filepath and os.path.exists(log_filepath):
+                try:
+                    with open(log_filepath, "r") as f:
+                        f.seek(0, 2) # End
+                        size = f.tell()
+                        f.seek(max(0, size - 4096)) # Last 4KB
+                        check_content += f.read()
+                except Exception:
+                    pass
+
+            if "port is already allocated" in check_content or ("Bind for" in check_content and "failed" in check_content):
+                 if i < max_retries - 1:
+                     if log_filepath:
+                         with open(log_filepath, "a") as f:
+                             f.write(f"\nPort busy (Attempt {i+1}/{max_retries}). Retrying in 5s...\n")
+                     time.sleep(5)
+                     continue
+
+            # If other error, break immediately
+            break
+
         if not success:
             return False, msg
 
@@ -312,39 +341,70 @@ class DockerService:
         self._cleanup_containers(tag, additional_names, log_filepath)
 
         # Run with Config
-        try:
-            if log_filepath:
-                with open(log_filepath, "a") as f:
-                    f.write(f"\nStarting container {tag}...\n")
+        max_retries = 12
+        for i in range(max_retries):
+            try:
+                if log_filepath and i == 0: # Only log start once or on retries?
+                    with open(log_filepath, "a") as f:
+                        f.write(f"\nStarting container {tag}...\n")
 
-            run_kwargs = {
-                "detach": True,
-                "name": tag,
-                "restart_policy": {"Name": "unless-stopped"}
-            }
+                run_kwargs = {
+                    "detach": True,
+                    "name": tag,
+                    "restart_policy": {"Name": "unless-stopped"}
+                }
 
-            if ports:
-                run_kwargs["ports"] = ports
+                if ports:
+                    run_kwargs["ports"] = ports
 
-            if volumes:
-                run_kwargs["volumes"] = volumes
+                if volumes:
+                    run_kwargs["volumes"] = volumes
 
-            if env:
-                run_kwargs["environment"] = env
+                if env:
+                    run_kwargs["environment"] = env
 
-            self.client.containers.run(tag, **run_kwargs)
+                self.client.containers.run(tag, **run_kwargs)
 
-            if log_filepath:
-                with open(log_filepath, "a") as f:
-                    f.write(f"\nContainer {tag} started successfully.\n")
+                if log_filepath:
+                    with open(log_filepath, "a") as f:
+                        f.write(f"\nContainer {tag} started successfully.\n")
 
-            return True, "Container Started"
-        except Exception as e:
-            msg = f"Run Error: {str(e)}"
-            if log_filepath:
-                with open(log_filepath, "a") as f:
-                    f.write(f"\n[ERROR] {msg}\n")
-            return False, msg
+                return True, "Container Started"
+
+            except docker.errors.APIError as e:
+                msg = str(e)
+                # Check for port allocation errors
+                if "port is already allocated" in msg or ("Bind for" in msg and "failed" in msg):
+                     # If we failed here, the container might have been created but failed to start.
+                     # We must clean it up before retrying to avoid Name Conflict.
+                     try:
+                         existing = self.client.containers.get(tag)
+                         existing.remove(force=True)
+                     except Exception:
+                         pass
+
+                     if i < max_retries - 1:
+                         if log_filepath:
+                             with open(log_filepath, "a") as f:
+                                 f.write(f"\nPort busy (Attempt {i+1}/{max_retries}). Retrying in 5s...\n")
+                         time.sleep(5)
+                         continue
+
+                # Fatal error
+                msg = f"Run Error: {str(e)}"
+                if log_filepath:
+                    with open(log_filepath, "a") as f:
+                        f.write(f"\n[ERROR] {msg}\n")
+                return False, msg
+
+            except Exception as e:
+                msg = f"Run Error: {str(e)}"
+                if log_filepath:
+                    with open(log_filepath, "a") as f:
+                        f.write(f"\n[ERROR] {msg}\n")
+                return False, msg
+
+        return False, "Failed to start container after retries."
 
     def get_logs(self, repo_path: str, repo_name: str, container_name: str = None):
         """Fetch logs from running containers associated with the repo."""
