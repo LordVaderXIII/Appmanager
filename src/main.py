@@ -12,6 +12,8 @@ import json
 import datetime
 import threading
 import shutil
+import tempfile
+import yaml
 from typing import List, Optional
 
 from .database import engine, Base, get_db
@@ -629,7 +631,8 @@ def trigger_now(background_tasks: BackgroundTasks):
 @app.post("/repos/preview")
 def preview_repo_config(
     url: str = Form(...),
-    link_container_id: Optional[str] = Form(None)
+    link_container_id: Optional[str] = Form(None),
+    db: Session = Depends(get_db)
 ):
     """
     Generates a configuration preview for a new or adopted repository.
@@ -641,31 +644,126 @@ def preview_repo_config(
             raise HTTPException(status_code=404, detail="Container not found")
         return JSONResponse(content=config)
     else:
-        # Generate Defaults for New App
+        # Default Logic: Try to clone and read docker-compose.yml
+        settings = get_settings(db)
         repo_slug = url.split("/")[-1].replace(".git", "")
-        # Sanitize somewhat
+        # Basic sanitization for default name
         container_name = "".join(c if c.isalnum() or c in ['-', '.'] else "_" for c in repo_slug).lower()
 
+        # Initialize defaults
         ports = {}
-        # Guess internal port 80 maps to a free external port
-        free_port = docker_service.find_available_port()
-        if free_port:
-            ports["80/tcp"] = free_port
-
-        # Default Unraid AppData path
-        host_path = f"/mnt/user/appdata/{container_name}"
-        volumes = {
-            host_path: {"bind": "/config", "mode": "rw"}
-        }
-
+        volumes = {}
         env = {}
+        image = None
+
+        # Create temp directory
+        temp_dir = tempfile.mkdtemp(prefix="jules_preview_")
+        try:
+            # 1. Clone (Shallow)
+            logger.info(f"Preview: Cloning {url} to {temp_dir}...")
+            success, msg = GitService.clone_repo(
+                url,
+                temp_dir,
+                settings.github_username,
+                settings.github_token
+            )
+
+            if success:
+                # 2. Check for docker-compose.yml
+                compose_file = None
+                if os.path.exists(os.path.join(temp_dir, "docker-compose.yml")):
+                    compose_file = os.path.join(temp_dir, "docker-compose.yml")
+                elif os.path.exists(os.path.join(temp_dir, "docker-compose.yaml")):
+                    compose_file = os.path.join(temp_dir, "docker-compose.yaml")
+
+                if compose_file:
+                    logger.info(f"Found compose file at {compose_file}")
+                    try:
+                        with open(compose_file, "r") as f:
+                            compose_data = yaml.safe_load(f)
+
+                        # Parse first service
+                        if compose_data and "services" in compose_data:
+                            # taking the first service
+                            service_name = list(compose_data["services"].keys())[0]
+                            service = compose_data["services"][service_name]
+
+                            logger.info(f"Parsing service: {service_name}")
+
+                            # Container Name
+                            if "container_name" in service:
+                                container_name = service["container_name"]
+
+                            # Image
+                            if "image" in service:
+                                image = service["image"]
+
+                            # Ports
+                            if "ports" in service:
+                                for p in service["ports"]:
+                                    # Handle string "8080:80" or dict
+                                    if isinstance(p, str) and ":" in p:
+                                        ext, internal = p.split(":", 1)
+                                        # internal might have /tcp
+                                        if "/" not in internal:
+                                            internal += "/tcp"
+                                        try:
+                                            ports[internal] = int(ext)
+                                        except ValueError:
+                                            pass
+
+                            # Volumes
+                            if "volumes" in service:
+                                for v in service["volumes"]:
+                                    if isinstance(v, str) and ":" in v:
+                                        host, container = v.split(":", 1)
+                                        volumes[host] = {"bind": container, "mode": "rw"}
+                                    elif isinstance(v, dict):
+                                        # Long syntax
+                                        pass
+
+                            # Environment
+                            if "environment" in service:
+                                env_data = service["environment"]
+                                if isinstance(env_data, list):
+                                    for item in env_data:
+                                        if "=" in item:
+                                            k, v = item.split("=", 1)
+                                            env[k] = v
+                                        else:
+                                            env[item] = "" # Empty value
+                                elif isinstance(env_data, dict):
+                                    for k, v in env_data.items():
+                                        env[k] = str(v) if v is not None else ""
+
+                    except Exception as e:
+                        logger.error(f"Failed to parse compose file: {e}")
+            else:
+                logger.warning(f"Preview Clone failed: {msg}")
+
+        except Exception as e:
+             logger.error(f"Error during preview generation: {e}")
+        finally:
+            # Cleanup
+            if os.path.exists(temp_dir):
+                shutil.rmtree(temp_dir)
+
+        # Fallback Defaults if empty
+        if not ports:
+            free_port = docker_service.find_available_port()
+            if free_port:
+                ports["80/tcp"] = free_port
+
+        if not volumes:
+            host_path = f"/mnt/user/appdata/{container_name}"
+            volumes[host_path] = {"bind": "/config", "mode": "rw"}
 
         return JSONResponse(content={
             "name": container_name,
             "ports": ports,
             "volumes": volumes,
             "env": env,
-            "image": None
+            "image": image
         })
 
 # --- Docker Endpoints ---

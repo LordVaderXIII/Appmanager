@@ -56,6 +56,15 @@ docker-compose up -d
 3. Click **Add Repository**.
 4. The system will clone, build, and run the repository automatically.
 
+### Repository Auto-Configuration
+When adding a new repository, App Manager attempts to read a `docker-compose.yml` (or `docker-compose.yaml`) file from the root of the repository. It parses the first service definition to pre-fill the configuration form with:
+*   **Container Name**
+*   **Ports**
+*   **Volumes**
+*   **Environment Variables**
+
+If no compose file is found, it falls back to standard defaults (internal port 80, `/config` volume).
+
 ## Architecture
 
 - **Backend**: Python (FastAPI)
