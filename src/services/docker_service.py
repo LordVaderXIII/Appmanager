@@ -435,3 +435,36 @@ class DockerService:
                  logs = f"Error fetching logs: {e}"
 
         return logs
+
+    def remove_container(self, container_name: str) -> tuple[bool, str]:
+        """
+        Safely stops and removes a container by name.
+        """
+        if not container_name:
+            return False, "No container name provided"
+
+        # Sanitize tag/name just in case, though we usually expect the DB name
+        clean_name = "".join(c if c.isalnum() or c in ['-', '.'] else "_" for c in container_name).lower()
+
+        # We reuse _cleanup_containers but we only want to target this specific one.
+        # However _cleanup_containers is designed for build process and scans widely.
+        # Let's do a direct removal for specificity.
+
+        try:
+            # Try exact match first
+            try:
+                container = self.client.containers.get(container_name)
+            except docker.errors.NotFound:
+                # Try sanitized name
+                try:
+                    container = self.client.containers.get(clean_name)
+                except docker.errors.NotFound:
+                     return True, "Container already gone"
+
+            container.stop()
+            container.remove()
+            return True, "Container removed"
+        except docker.errors.APIError as e:
+            return False, f"Docker API Error: {e}"
+        except Exception as e:
+            return False, f"Error: {e}"

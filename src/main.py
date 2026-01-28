@@ -11,6 +11,7 @@ import hashlib
 import json
 import datetime
 import threading
+import shutil
 from typing import List, Optional
 
 from .database import engine, Base, get_db
@@ -582,13 +583,42 @@ def add_repo(
     return RedirectResponse(url="/", status_code=303)
 
 @app.post("/repos/{repo_id}/delete")
-def delete_repo(repo_id: int, db: Session = Depends(get_db)):
+def delete_repo(
+    repo_id: int,
+    remove_container: bool = Form(False),
+    db: Session = Depends(get_db)
+):
     repo = db.query(Repository).filter(Repository.id == repo_id).first()
     if repo:
-        # Optional: Delete local files?
-        # shutil.rmtree(repo.local_path) if exists
+        # 1. Delete associated Error Logs to clear FK constraints
+        db.query(ErrorLog).filter(ErrorLog.repository_id == repo.id).delete()
+
+        # 2. Delete Local Files (Repo)
+        if repo.local_path and os.path.exists(repo.local_path):
+            try:
+                shutil.rmtree(repo.local_path)
+                logger.info(f"Deleted local files for {repo.name}")
+            except Exception as e:
+                logger.error(f"Failed to delete local path {repo.local_path}: {e}")
+
+        # 3. Delete Build/Runtime Log File
+        log_file = os.path.join(LOGS_DIR, f"{repo.id}.log")
+        if os.path.exists(log_file):
+            try:
+                os.remove(log_file)
+                logger.info(f"Deleted log file for {repo.name}")
+            except Exception as e:
+                 logger.error(f"Failed to delete log file {log_file}: {e}")
+
+        # 4. Remove Docker Container (Optional)
+        if remove_container and repo.container_name:
+             success, msg = docker_service.remove_container(repo.container_name)
+             logger.info(f"Container removal for {repo.container_name}: {msg}")
+
+        # 5. Delete Database Record
         db.delete(repo)
         db.commit()
+
     return RedirectResponse(url="/", status_code=303)
 
 @app.post("/repos/trigger")

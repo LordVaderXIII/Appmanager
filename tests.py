@@ -8,7 +8,7 @@ from unittest.mock import MagicMock, patch
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from src.models import Base, Repository, Settings, ErrorLog
-from src.main import process_repo, handle_error
+from src.main import process_repo, handle_error, delete_repo
 from src.services.docker_service import DockerService
 
 # In-memory DB for testing
@@ -321,6 +321,97 @@ class TestDockerService(unittest.TestCase):
 
         # Verify cleanup called on failed attempt
         mock_failed_container.remove.assert_called_with(force=True)
+
+class TestDeleteRepo(unittest.TestCase):
+    def setUp(self):
+        Base.metadata.create_all(bind=engine)
+        self.db = TestingSessionLocal()
+
+    def tearDown(self):
+        self.db.close()
+        Base.metadata.drop_all(bind=engine)
+
+    @patch("src.main.docker_service")
+    @patch("src.main.shutil.rmtree")
+    @patch("src.main.os.remove")
+    @patch("src.main.os.path.exists")
+    @patch("src.main.LOGS_DIR", "/tmp/logs")
+    def test_delete_repo_full_cleanup(self, mock_exists, mock_remove, mock_rmtree, mock_docker):
+        # Setup Data
+        repo = Repository(
+            url="https://github.com/test/repo.git",
+            name="test/repo",
+            local_path="/tmp/repos/repo",
+            container_name="test-container"
+        )
+        self.db.add(repo)
+        self.db.commit()
+
+        # Add Error Log to verify cascade/manual delete
+        error_log = ErrorLog(repository_id=repo.id, error_hash="hash", error_message="fail")
+        self.db.add(error_log)
+        self.db.commit()
+
+        repo_id = repo.id
+
+        # Mock Existence
+        # 1. repo.local_path exists
+        # 2. log_file exists
+        mock_exists.side_effect = [True, True]
+
+        # Mock Docker Return
+        mock_docker.remove_container.return_value = (True, "Removed")
+
+        # Call Delete with remove_container=True
+        delete_repo(repo_id=repo_id, remove_container=True, db=self.db)
+
+        # Verify DB Deletion
+        repo_check = self.db.query(Repository).filter(Repository.id == repo_id).first()
+        self.assertIsNone(repo_check)
+
+        log_check = self.db.query(ErrorLog).filter(ErrorLog.repository_id == repo_id).first()
+        self.assertIsNone(log_check)
+
+        # Verify File Deletion
+        mock_rmtree.assert_called_with("/tmp/repos/repo")
+        mock_remove.assert_called_with(f"/tmp/logs/{repo_id}.log")
+
+        # Verify Docker Removal
+        mock_docker.remove_container.assert_called_with("test-container")
+
+    @patch("src.main.docker_service")
+    @patch("src.main.shutil.rmtree")
+    @patch("src.main.os.remove")
+    @patch("src.main.os.path.exists")
+    def test_delete_repo_no_container_removal(self, mock_exists, mock_remove, mock_rmtree, mock_docker):
+        # Setup Data
+        repo = Repository(
+            url="https://github.com/test/repo.git",
+            name="test/repo",
+            local_path="/tmp/repos/repo",
+            container_name="test-container"
+        )
+        self.db.add(repo)
+        self.db.commit()
+
+        repo_id = repo.id
+
+        # Mock Existence
+        mock_exists.return_value = True
+
+        # Call Delete with remove_container=False
+        delete_repo(repo_id=repo_id, remove_container=False, db=self.db)
+
+        # Verify DB Deletion
+        repo_check = self.db.query(Repository).filter(Repository.id == repo_id).first()
+        self.assertIsNone(repo_check)
+
+        # Verify File Deletion
+        mock_rmtree.assert_called_once()
+        mock_remove.assert_called_once()
+
+        # Verify Docker Removal NOT called
+        mock_docker.remove_container.assert_not_called()
 
 if __name__ == "__main__":
     unittest.main()
