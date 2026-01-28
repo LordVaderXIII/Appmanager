@@ -152,6 +152,12 @@
         document.getElementById('conf-url').value = url;
         document.getElementById('conf-link-id').value = linkId || '';
 
+        // UI Feedback: Loading
+        const btn = form.querySelector('button[type="submit"]');
+        const originalText = btn.innerText;
+        btn.disabled = true;
+        btn.innerText = "Analyzing Repo...";
+
         // Fetch Preview
         const previewFormData = new FormData();
         previewFormData.append('url', url);
@@ -169,6 +175,10 @@
             openConfigModal(data);
         } catch (e) {
             alert("Error loading configuration: " + e.message);
+        } finally {
+            // Restore Button
+            btn.disabled = false;
+            btn.innerText = originalText;
         }
     }
 
