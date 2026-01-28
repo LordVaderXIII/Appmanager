@@ -105,6 +105,18 @@ class DockerService:
                     return port
         return 0
 
+    def _read_log_tail(self, filepath: str, max_chars: int = 3000) -> str:
+        try:
+            if not os.path.exists(filepath):
+                return ""
+            with open(filepath, "r") as f:
+                f.seek(0, 2)
+                size = f.tell()
+                f.seek(max(0, size - max_chars))
+                return f.read()
+        except Exception:
+            return ""
+
     def _run_cmd(self, cmd: List[str], cwd: str, log_filepath: Optional[str], timeout: int) -> tuple[bool, str]:
         """Helper to run subprocess commands with logging and timeout."""
         f_handle = None
@@ -136,16 +148,34 @@ class DockerService:
             msg = f"Process timed out after {timeout} seconds."
             if f_handle:
                 f_handle.write(f"\n[ERROR] {msg}\n")
+                f_handle.flush()
+
+            if log_filepath:
+                log_content = self._read_log_tail(log_filepath)
+                if log_content:
+                    msg += f"\n\nLog Output:\n{log_content}"
             return False, msg
         except subprocess.CalledProcessError as e:
             msg = f"Process failed with exit code {e.returncode}."
             if f_handle:
                 f_handle.write(f"\n[ERROR] {msg}\n")
+                f_handle.flush()
+
+            if log_filepath:
+                log_content = self._read_log_tail(log_filepath)
+                if log_content:
+                    msg += f"\n\nLog Output:\n{log_content}"
             return False, msg
         except Exception as e:
             msg = f"Unexpected error: {str(e)}"
             if f_handle:
                  f_handle.write(f"\n[ERROR] {msg}\n")
+                 f_handle.flush()
+
+            if log_filepath:
+                log_content = self._read_log_tail(log_filepath)
+                if log_content:
+                    msg += f"\n\nLog Output:\n{log_content}"
             return False, msg
         finally:
             if f_handle:
